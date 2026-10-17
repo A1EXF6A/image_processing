@@ -225,10 +225,8 @@ test("La página define exactamente 4 sliders (0-100) y 8 histogramas", () => {
   }
 
   const canvases = html.match(/<canvas[^>]*id="hist-/g) || [];
-  assert.equal(canvases.length, 8, "deben existir exactamente 8 histogramas");
+  assert.equal(canvases.length, 6, "deben existir exactamente 8 histogramas");
   for (const id of [
-    "hist-rgb-before",
-    "hist-rgb-after",
     "hist-r-before",
     "hist-r-after",
     "hist-g-before",

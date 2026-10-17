@@ -1,5 +1,9 @@
-"""Backend FastAPI: ecualización interactiva RGB (porcentajes 0-100 por canal)
-y histogramas originales/actualizados."""
+"""Backend FastAPI: efecto "arena" sobre el histograma RGB.
+
+El pico de cada canal se desinfla y la arena se esparce por igual entre las
+demás intensidades (porcentajes 0-100 por canal). Devuelve además los
+histogramas originales y actualizados de R, G y B.
+"""
 
 import io
 
@@ -10,7 +14,7 @@ from PIL import Image
 
 import image_utils as iu
 
-app = FastAPI(title="Procesador de imágenes RGB")
+app = FastAPI(title="Procesador de imágenes RGB · efecto arena")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,7 +49,7 @@ def _check_percent(name: str, value: float) -> float:
 
 @app.get("/api/sample")
 def get_sample():
-    """Imagen de prueba (bajo contraste) para demostrar la ecualización."""
+    """Imagen de prueba (bajo contraste) para demostrar el efecto arena."""
     img = iu.generate_sample_image()
     buf = io.BytesIO()
     Image.fromarray(img, mode="RGB").save(buf, format="PNG")
@@ -57,10 +61,9 @@ async def prepare(file: UploadFile = File(...)):
     """Calcula una sola vez, para cada imagen cargada:
 
     - los histogramas originales reales de R, G y B, y
-    - las tablas de transformación completas T_eq de cada canal.
+    - la zona del pico de cada canal (rango de intensidades y umbral).
 
-    El cliente reutiliza estos datos para actualizar la imagen y los ocho
-    histogramas sin volver a enviar la imagen en cada movimiento de slider.
+    Así el cliente conoce de dónde sale la arena antes de mover los sliders.
     """
     _, img = await _read_image(file)
     payload = iu.prepare_image(img)
@@ -75,30 +78,39 @@ async def prepare(file: UploadFile = File(...)):
 @app.post("/api/process")
 async def process(
     file: UploadFile = File(...),
-    eq_r: float = Form(0),
-    eq_g: float = Form(0),
-    eq_b: float = Form(0),
+    cut_r: float = Form(0),
+    cut_g: float = Form(0),
+    cut_b: float = Form(0),
+    format: str = Form("png"),
 ):
-    """Aplica la ecualización progresiva (0-100 %) de cada canal RGB.
+    """Aplica el efecto arena (0-100 %) a cada canal RGB.
 
-    Cada canal se ecualiza de forma independiente a partir de su histograma
-    original: T_p(k) = (1 - p) * k + p * T_eq(k).
+    Cada canal se procesa de forma independiente a partir de su histograma
+    original: el pico pierde ``cut`` % de su exceso y esos píxeles se reparten
+    por igual entre las demás intensidades.
+
+    ``format`` elige cómo se devuelve ``image_after``: ``png`` (sin pérdida,
+    por defecto, para descargar) o ``jpeg`` (vista previa, mucho más liviana).
+    No devuelve ``image_before`` (el cliente ya la recibió en /api/prepare).
     """
     _, img = await _read_image(file)
-    _check_percent("eq_r", eq_r)
-    _check_percent("eq_g", eq_g)
-    _check_percent("eq_b", eq_b)
+    _check_percent("cut_r", cut_r)
+    _check_percent("cut_g", cut_g)
+    _check_percent("cut_b", cut_b)
+    fmt = format.strip().lower()
+    if fmt not in ("png", "jpeg"):
+        raise HTTPException(status_code=422, detail="format debe ser 'png' o 'jpeg'.")
 
-    equalized = iu.process_rgb(img, eq_r, eq_g, eq_b)
-    prepared = iu.prepare_image(img)
-    hist_after = iu.compute_histograms(equalized)
+    procesada = iu.sand_rgb(img, cut_r, cut_g, cut_b)
+    hist_original = iu.compute_histograms(img)
+    hist_after = iu.compute_histograms(procesada)
 
     return {
         "width": int(img.shape[1]),
         "height": int(img.shape[0]),
-        "image_before": iu.to_data_url(img),
-        "image_after": iu.to_data_url(equalized),
-        "hist_original": prepared["hist_original"],
-        "hist_equalized": {name: hist_after[name].tolist() for name in ("r", "g", "b")},
-        "eq": {"r": eq_r, "g": eq_g, "b": eq_b},
+        "image_after": iu.to_data_url(procesada, fmt.upper()),
+        "hist_original": {name: hist_original[name].tolist() for name in ("r", "g", "b")},
+        "hist_after": {name: hist_after[name].tolist() for name in ("r", "g", "b")},
+        "peaks": iu.prepare_image(img)["peaks"],
+        "cut": {"r": cut_r, "g": cut_g, "b": cut_b},
     }

@@ -13,43 +13,68 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 		<title>Visor RGB · Ecualización interactiva</title>
 	</head>
 	<body data-api={API}>
-		<header>
-			<h1>Procesador de imágenes RGB</h1>
-			<p>Ecualización interactiva por canal &middot; 4 controles &middot; 8 histogramas</p>
-		</header>
-
 		<main>
-			<section class="controls">
-				<h2>Controles</h2>
 
-				<label class="file-field">
-					<span>Subir imagen</span>
-					<input id="file" type="file" accept="image/*" />
-				</label>
+			<section class="histograms">
+				<div class="charts">
+          <div class="channels">
+            <span class="title">Original</span>
+            <figure>
+              <figcaption><span class="dot dot-r"></span> Red</figcaption>
+              <canvas id="hist-r-before" class="hist"></canvas>
+              <div class="slider" data-channel="r">
+                <div class="slider-head">Rojo (R)<output id="out-r">0%</output></div>
+                <input id="eq-r" type="range" min="0" max="100" value="0" step="1" class="range range-r" />
+              </div>
+            </figure>
 
-				<button id="sample-btn" type="button" class="ghost">Usar imagen de ejemplo</button>
+            <figure>
+              <figcaption><span class="dot dot-g"></span> Green</figcaption>
+              <canvas id="hist-g-before" class="hist"></canvas>
+              <div class="slider" data-channel="g">
+                <div class="slider-head">Verde (G)<output id="out-g">0%</output></div>
+                <input id="eq-g" type="range" min="0" max="100" value="0" step="1" class="range range-g" />
+              </div>
+            </figure>
+
+            <figure>
+              <figcaption><span class="dot dot-b"></span> Blue</figcaption>
+              <canvas id="hist-b-before" class="hist"></canvas>
+              <div class="slider" data-channel="b">
+                <div class="slider-head">Azul (B)<output id="out-b">0%</output></div>
+                <input id="eq-b" type="range" min="0" max="100" value="0" step="1" class="range range-b" />
+              </div>
+            </figure>
+          </div>
+
+          <div class="channels">
+            <span class="title">Procesada</span>
+            <figure>
+              <figcaption><span class="dot dot-r"></span> Red</figcaption>
+              <canvas id="hist-r-after" class="hist"></canvas>
+            </figure>
+
+            <figure>
+              <figcaption><span class="dot dot-g"></span> Green</figcaption>
+              <canvas id="hist-g-after" class="hist"></canvas>
+            </figure>
+
+            <figure>
+              <figcaption><span class="dot dot-b"></span> Blue</figcaption>
+              <canvas id="hist-b-after" class="hist"></canvas>
+            </figure>
+          </div>
+
+				</div>
 
 				<div class="sliders">
 					<div class="slider" data-channel="all">
 						<div class="slider-head">
-							<span class="dot dot-all"></span>Ecualización general (RGB)
+							General (RGB)
 							<output id="out-all">0%</output>
 						</div>
 						<input id="eq-all" type="range" min="0" max="100" value="0" step="1" class="range range-all" />
 						<p id="eq-hint" class="hint">R 0% · G 0% · B 0%</p>
-					</div>
-
-					<div class="slider" data-channel="r">
-						<div class="slider-head"><span class="dot dot-r"></span>Rojo (R)<output id="out-r">0%</output></div>
-						<input id="eq-r" type="range" min="0" max="100" value="0" step="1" class="range range-r" />
-					</div>
-					<div class="slider" data-channel="g">
-						<div class="slider-head"><span class="dot dot-g"></span>Verde (G)<output id="out-g">0%</output></div>
-						<input id="eq-g" type="range" min="0" max="100" value="0" step="1" class="range range-g" />
-					</div>
-					<div class="slider" data-channel="b">
-						<div class="slider-head"><span class="dot dot-b"></span>Azul (B)<output id="out-b">0%</output></div>
-						<input id="eq-b" type="range" min="0" max="100" value="0" step="1" class="range range-b" />
 					</div>
 				</div>
 
@@ -62,76 +87,29 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			</section>
 
 			<section class="preview">
-				<h2>Vista previa</h2>
 				<div class="images">
 					<figure>
 						<figcaption>Original</figcaption>
 						<div class="frame"><img id="img-before" alt="Imagen original" /></div>
 					</figure>
 					<figure>
-						<figcaption>Procesada <small>(ecualización aplicada)</small></figcaption>
+						<figcaption>Procesada</figcaption>
 						<div class="frame"><img id="img-after" alt="Imagen procesada" /></div>
 					</figure>
 				</div>
-			</section>
 
-			<section class="histograms">
-				<h2>Histogramas</h2>
-				<div class="charts">
-					<figure>
-						<figcaption>1 · RGB original</figcaption>
-						<canvas id="hist-rgb-before" class="hist"></canvas>
-						<ul class="legend">
-							<li><span class="dot dot-r"></span>R</li>
-							<li><span class="dot dot-g"></span>G</li>
-							<li><span class="dot dot-b"></span>B</li>
-						</ul>
-					</figure>
-					<figure>
-						<figcaption>2 · RGB actualizado</figcaption>
-						<canvas id="hist-rgb-after" class="hist"></canvas>
-						<ul class="legend">
-							<li><span class="dot dot-r"></span>R</li>
-							<li><span class="dot dot-g"></span>G</li>
-							<li><span class="dot dot-b"></span>B</li>
-						</ul>
-					</figure>
+				<label class="file-field">
+					<span>Subir imagen</span>
+					<input id="file" type="file" accept="image/*" />
+				</label>
 
-					<figure>
-						<figcaption>3 · <span class="dot dot-r"></span> R original</figcaption>
-						<canvas id="hist-r-before" class="hist"></canvas>
-					</figure>
-					<figure>
-						<figcaption>4 · <span class="dot dot-r"></span> R actualizado</figcaption>
-						<canvas id="hist-r-after" class="hist"></canvas>
-					</figure>
-
-					<figure>
-						<figcaption>5 · <span class="dot dot-g"></span> G original</figcaption>
-						<canvas id="hist-g-before" class="hist"></canvas>
-					</figure>
-					<figure>
-						<figcaption>6 · <span class="dot dot-g"></span> G actualizado</figcaption>
-						<canvas id="hist-g-after" class="hist"></canvas>
-					</figure>
-
-					<figure>
-						<figcaption>7 · <span class="dot dot-b"></span> B original</figcaption>
-						<canvas id="hist-b-before" class="hist"></canvas>
-					</figure>
-					<figure>
-						<figcaption>8 · <span class="dot dot-b"></span> B actualizado</figcaption>
-						<canvas id="hist-b-after" class="hist"></canvas>
-					</figure>
-				</div>
+				<button id="sample-btn" type="button" class="ghost">Usar imagen de ejemplo</button>
 			</section>
 		</main>
 
 		<script>
 			import {
 				CHANNELS,
-				processRgba,
-				histogramsFromRgba,
 				setGeneral,
 				setChannel,
 				generalState,
@@ -162,34 +140,30 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				b: document.getElementById("out-b") as HTMLOutputElement,
 			};
 
-			const COLORS = { r: "#ff5c5c", g: "#4ade80", b: "#60a5fa" };
+			const COLORS = { r: "#ff6b6b", g: "#6ee787", b: "#7ab8ff" };
 
 			const PAIRS = [
-				{ before: "hist-rgb-before", after: "hist-rgb-after", channels: [...CHANNELS] },
 				{ before: "hist-r-before", after: "hist-r-after", channels: ["r"] },
 				{ before: "hist-g-before", after: "hist-g-after", channels: ["g"] },
 				{ before: "hist-b-before", after: "hist-b-after", channels: ["b"] },
 			];
+
+			type Hists = { r: number[]; g: number[]; b: number[] };
+			type PeakInfo = { inicio: number; fin: number; umbral: number };
 
 			let sourceBlob: Blob | null = null;
 			let sourceName = "sample.png";
 			let prepared: {
 				width: number;
 				height: number;
-				rgba: Uint8ClampedArray;
-				luts: { r: number[]; g: number[]; b: number[] };
-				histOriginal: { r: number[]; g: number[]; b: number[] };
+				histOriginal: Hists;
+				peaks: { r: PeakInfo; g: PeakInfo; b: PeakInfo };
 			} | null = null;
 			let pct = { r: 0, g: 0, b: 0 };
-			let lastHists: {
-				before: { r: number[]; g: number[]; b: number[] };
-				after: { r: number[]; g: number[]; b: number[] };
-			} | null = null;
+			let lastHists: { before: Hists; after: Hists } | null = null;
 			let renderTimer: number | undefined;
 			let requestId = 0;
-
-			const outCanvas = document.createElement("canvas");
-			const outCtx = outCanvas.getContext("2d")!;
+			let renderId = 0;
 
 			function setStatus(text: string, isError = false) {
 				statusEl.textContent = text;
@@ -199,13 +173,6 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			function hexToRgba(hex: string, alpha: number) {
 				const n = parseInt(hex.slice(1), 16);
 				return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
-			}
-
-			function percentile(values: number[], p: number) {
-				if (!values.length) return 1;
-				const sorted = [...values].sort((a, b) => a - b);
-				const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
-				return sorted[idx] || 1;
 			}
 
 			function drawHistogram(
@@ -228,11 +195,11 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				const plotW = cssW - pad.left - pad.right;
 				const plotH = cssH - pad.top - pad.bottom;
 
-				ctx.fillStyle = "#0e1424";
+				ctx.fillStyle = "#0a080d";
 				ctx.fillRect(0, 0, cssW, cssH);
 
-				ctx.strokeStyle = "rgba(255,255,255,0.07)";
-				ctx.fillStyle = "rgba(255,255,255,0.4)";
+				ctx.strokeStyle = "rgba(167,139,250,0.10)";
+				ctx.fillStyle = "rgba(243,240,247,0.55)";
 				ctx.font = "10px ui-monospace, monospace";
 				ctx.textAlign = "center";
 				for (let i = 0; i <= 4; i++) {
@@ -250,7 +217,10 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 					ctx.moveTo(pad.left, pad.top + plotH);
 					for (let i = 0; i < 256; i++) {
 						const x = pad.left + (i / 255) * plotW;
-						const y = pad.top + plotH - Math.min(s.data[i] / yMax, 1) * plotH;
+						// Escala raíz cuadrada: deja ver a la vez el pico que baja
+						// y la base que se infla (una escala lineal aplastaría la base).
+						const rel = Math.min(s.data[i] / yMax, 1);
+						const y = pad.top + plotH - Math.sqrt(rel) * plotH;
 						ctx.lineTo(x, y);
 					}
 					ctx.lineTo(pad.left + plotW, pad.top + plotH);
@@ -279,10 +249,13 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 					const sAfter = seriesFor(after, pair.channels);
 					const all: number[] = [];
 					for (const s of [...sBefore, ...sAfter]) all.push(...s.data);
-					const yMax = Math.max(percentile(all, 0.985), 1);
+					// Usamos el máximo real (el pico original) para que la bajada
+					// del pico sea visible; la raíz cuadrada compensa la base.
+					const yMax = Math.max(...all, 1);
 
-					const elBefore = document.getElementById(pair.before) as HTMLCanvasElement;
-					const elAfter = document.getElementById(pair.after) as HTMLCanvasElement;
+					const elBefore = document.getElementById(pair.before) as HTMLCanvasElement | null;
+					const elAfter = document.getElementById(pair.after) as HTMLCanvasElement | null;
+					if (!elBefore || !elAfter) continue;
 					drawHistogram(elBefore, sBefore, yMax);
 					drawHistogram(elAfter, sAfter, yMax);
 				}
@@ -305,26 +278,42 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			}
 
 			function render() {
-				if (!prepared) return;
-				const { rgba, luts, width, height, histOriginal } = prepared;
-				const out = processRgba(rgba, luts, pct);
+				if (!prepared || !sourceBlob) return;
+				const id = ++renderId;
+				const form = new FormData();
+				form.append("file", sourceBlob, sourceName);
+				form.append("cut_r", String(Math.round(pct.r)));
+				form.append("cut_g", String(Math.round(pct.g)));
+				form.append("cut_b", String(Math.round(pct.b)));
+				form.append("format", "jpeg");
 
-				if (outCanvas.width !== width || outCanvas.height !== height) {
-					outCanvas.width = width;
-					outCanvas.height = height;
-				}
-				outCtx.putImageData(new ImageData(out, width, height), 0, 0);
-				imgAfter.src = outCanvas.toDataURL("image/png");
+				fetch(`${API}/api/process`, { method: "POST", body: form })
+					.then(async (res) => {
+						if (id !== renderId) return;
+						if (!res.ok) {
+							const text = await res.text();
+							throw new Error(`El servidor respondió ${res.status}: ${text}`);
+						}
+						const data = await res.json();
+						if (id !== renderId) return;
 
-				const after = histogramsFromRgba(out);
-				lastHists = { before: histOriginal, after };
-				renderHistograms(lastHists.before, lastHists.after);
-				setStatus(`Listo · ${width}×${height}px · ${channelSummary(pct)}`);
+						imgAfter.src = data.image_after;
+						lastHists = { before: prepared!.histOriginal, after: data.hist_after };
+						renderHistograms(lastHists.before, lastHists.after);
+						setStatus(
+							`Listo · ${prepared!.width}×${prepared!.height}px · ${channelSummary(pct)} · arena activo`
+						);
+					})
+					.catch((err) => {
+						if (id !== renderId) return;
+						const message = err instanceof Error ? err.message : String(err);
+						setStatus(`Error: ${message}`, true);
+					});
 			}
 
 			function scheduleRender() {
 				window.clearTimeout(renderTimer);
-				renderTimer = window.setTimeout(render, 60);
+				renderTimer = window.setTimeout(render, 120);
 			}
 
 			async function decodeImage(dataUrl: string) {
@@ -364,9 +353,8 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 					prepared = {
 						width,
 						height,
-						rgba: imageData.data,
-						luts: data.luts,
 						histOriginal: data.hist_original,
+						peaks: data.peaks,
 					};
 					imgBefore.src = data.image_before;
 					render();
@@ -441,13 +429,26 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 		<style is:global>
 			:root {
 				color-scheme: dark;
-				--bg: #0a0e17;
-				--panel: #111a2e;
-				--panel-2: #16203a;
-				--border: #223052;
-				--text: #e6ecf7;
-				--muted: #8ea0c2;
-				--accent: #6ea8fe;
+
+				/* Base negro puro */
+				--bg: #0f0d13;
+				--panel: #1a1721;
+				--panel-2: #221e2c;
+				--surface: #0a080d;
+				--border: #37314a;
+
+				/* Texto */
+				--text: #f3f0f7;
+				--muted: #a49db5;
+
+				/* Acento violeta */
+				--accent: #a78bfa;
+				--accent-strong: #c4b5fd;
+				--track: #2d2840;
+
+				/* Estados */
+				--warn-ink: #ffd28a;
+				--error-ink: #ff8a80;
 			}
 
 			* {
@@ -456,43 +457,31 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 			body {
 				margin: 0;
-				background: radial-gradient(1200px 600px at 50% -100px, #16233f 0%, var(--bg) 60%);
+				background-color: var(--bg);
 				color: var(--text);
 				font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
-				min-height: 100vh;
-			}
 
-			header {
-				padding: 28px 24px 8px;
-				text-align: center;
-			}
-
-			header h1 {
-				margin: 0 0 6px;
-				font-size: 1.6rem;
-				letter-spacing: 0.2px;
-			}
-
-			header p {
-				margin: 0;
-				color: var(--muted);
-				font-size: 0.9rem;
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
 			}
 
 			main {
-				max-width: 1180px;
-				margin: 0 auto;
-				padding: 20px 24px 60px;
+				padding: 16px;
 				display: grid;
-				grid-template-columns: 320px 1fr;
-				gap: 20px;
+				grid-template-columns: 70% minmax(0, 1fr);
+				gap: 16px;
+        flex: 1;
+
+        min-height: 0;
+        min-width: 0;
 			}
 
 			section {
 				background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
 				border: 1px solid var(--border);
 				border-radius: 16px;
-				padding: 18px;
+				padding: 14px 18px;
 			}
 
 			section h2 {
@@ -507,15 +496,14 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				display: flex;
 				flex-direction: column;
 				gap: 16px;
-				grid-row: span 2;
 			}
 
 			.file-field {
 				display: flex;
 				flex-direction: column;
 				gap: 6px;
-				font-size: 0.85rem;
-				color: var(--muted);
+				font-size: 0.82rem;
+				color: var(--text);
 			}
 
 			.file-field input {
@@ -533,13 +521,13 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			}
 
 			button.ghost {
-				background: #1b2740;
+				background: var(--panel-2);
 				color: var(--text);
 			}
 
 			button.ghost:hover {
 				border-color: var(--accent);
-				background: #223255;
+				background: #282140;
 			}
 
 			.sliders {
@@ -556,8 +544,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				display: flex;
 				align-items: center;
 				gap: 8px;
-				font-size: 0.85rem;
-				margin-bottom: 6px;
+				font-size: 0.82rem;
 				color: var(--muted);
 			}
 
@@ -568,7 +555,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			}
 
 			.slider-head output.mixed {
-				color: #ffc46b;
+				color: var(--warn-ink);
 			}
 
 			.hint {
@@ -579,7 +566,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			}
 
 			.hint.mixed {
-				color: #ffc46b;
+				color: var(--warn-ink);
 			}
 
 			.dot {
@@ -589,10 +576,10 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				display: inline-block;
 			}
 
-			.dot-r { background: #ff5c5c; }
-			.dot-g { background: #4ade80; }
-			.dot-b { background: #60a5fa; }
-			.dot-all { background: linear-gradient(135deg, #ff5c5c, #4ade80, #60a5fa); }
+			.dot-r { background: #ff6b6b; }
+			.dot-g { background: #6ee787; }
+			.dot-b { background: #7ab8ff; }
+			.dot-all { background: linear-gradient(135deg, #ff6b6b, #6ee787, #7ab8ff); }
 
 			input[type="range"] {
 				width: 100%;
@@ -600,7 +587,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				appearance: none;
 				height: 6px;
 				border-radius: 999px;
-				background: #26324f;
+				background: var(--track);
 				outline: none;
 			}
 
@@ -610,7 +597,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				width: 16px;
 				height: 16px;
 				border-radius: 50%;
-				border: 2px solid #0a0e17;
+				border: 2px solid var(--surface);
 				cursor: pointer;
 			}
 
@@ -618,18 +605,18 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				width: 14px;
 				height: 14px;
 				border-radius: 50%;
-				border: 2px solid #0a0e17;
+				border: 2px solid var(--surface);
 				cursor: pointer;
 			}
 
-			.range-all::-webkit-slider-thumb { background: #6ea8fe; }
-			.range-r::-webkit-slider-thumb { background: #ff5c5c; }
-			.range-g::-webkit-slider-thumb { background: #4ade80; }
-			.range-b::-webkit-slider-thumb { background: #60a5fa; }
-			.range-all::-moz-range-thumb { background: #6ea8fe; }
-			.range-r::-moz-range-thumb { background: #ff5c5c; }
-			.range-g::-moz-range-thumb { background: #4ade80; }
-			.range-b::-moz-range-thumb { background: #60a5fa; }
+			.range-all::-webkit-slider-thumb { background: var(--accent); }
+			.range-r::-webkit-slider-thumb { background: #ff6b6b; }
+			.range-g::-webkit-slider-thumb { background: #6ee787; }
+			.range-b::-webkit-slider-thumb { background: #7ab8ff; }
+			.range-all::-moz-range-thumb { background: var(--accent); }
+			.range-r::-moz-range-thumb { background: #ff6b6b; }
+			.range-g::-moz-range-thumb { background: #6ee787; }
+			.range-b::-moz-range-thumb { background: #7ab8ff; }
 
 			.row {
 				display: flex;
@@ -648,23 +635,52 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			}
 
 			.status.error {
-				color: #ff8080;
+				color: var(--error-ink);
 			}
 
+      .preview {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+
+        min-height: 0;
+        min-width: 0;
+      }
+
 			.preview .images {
-				display: grid;
-				grid-template-columns: 1fr 1fr;
-				gap: 14px;
+        display: grid;
+        grid-template-rows: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+
+        flex: 1;
+        min-height: 0;
 			}
+
+      .preview figure {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 6px;
+
+        min-height: 0;
+        min-width: 0;
+      }
 
 			figure {
 				margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
 			}
+
+      .slider .slider-head,
+      figure figcaption
+      {
+        padding-left: 3px;
+      }
 
 			figcaption {
 				font-size: 0.82rem;
 				color: var(--muted);
-				margin-bottom: 8px;
 			}
 
 			figcaption .dot {
@@ -672,15 +688,22 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			}
 
 			figcaption small {
-				color: #5f7194;
+				color: var(--muted);
 			}
 
 			.frame {
-				background: #0b1020;
+        width: 100%;
+        aspect-ratio: 4 / 3;
+
+        min-width: 0;
+        min-height: 0;
+        max-height: 100%;
+
+				background: var(--surface);
 				border: 1px solid var(--border);
 				border-radius: 12px;
 				overflow: hidden;
-				aspect-ratio: 4 / 3;
+
 				display: flex;
 				align-items: center;
 				justify-content: center;
@@ -692,15 +715,31 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				display: block;
 			}
 
-			.histograms {
-				grid-column: 2;
-			}
+      .histograms {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
 
 			.charts {
-				display: grid;
-				grid-template-columns: 1fr 1fr;
-				gap: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
 			}
+
+      .charts .channels {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        column-gap: 16px;
+      }
+
+      .channels span.title {
+        grid-column: 1 / -1;
+        font-size: 0.82rem;
+        color: var(--text);
+        margin-bottom: 6px;
+        display: block;
+      }
 
 			canvas.hist {
 				width: 100%;
@@ -732,9 +771,6 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				}
 				.controls {
 					grid-row: auto;
-				}
-				.histograms {
-					grid-column: 1;
 				}
 				.preview .images,
 				.charts {

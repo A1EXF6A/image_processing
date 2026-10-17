@@ -1,5 +1,23 @@
-"""Procesamiento de imágenes: histogramas RGB, tablas de transformación y
-ecualización progresiva por canal (R, G, B) independiente."""
+"""Procesamiento de imágenes: histogramas RGB y efecto "arena" por canal.
+
+Efecto arena (por canal, de forma independiente)
+------------------------------------------------
+1. ZONA DEL PICO: se marca cada intensidad cuya cuenta supera el
+   ``PEAK_FRACTION`` (45 %) del máximo del canal. Ese es el "montón de arena".
+2. El slider ``percent`` (0-100) define cuánto se DESINFLA el pico: se le
+   quitan ese porcentaje de su *exceso* (la cuenta por encima del umbral).
+3. Los píxeles quitados se reparten POR IGUAL entre TODAS las intensidades
+   que no son pico: "la arena se esparce por la base" y todo lo demás se
+   infla de la misma forma.
+4. Los píxeles se reasignan de forma determinista: se ordenan por intensidad
+   y, dentro de cada intensidad, por un hash de su posición (así el reparto
+   no forma bandas). El histograma de la imagen resultante es, exactamente,
+   el histograma objetivo calculado en los pasos 2 y 3.
+
+El total de píxeles se conserva siempre y ``percent=0`` devuelve la imagen
+original sin cambios. Para calcular cualquier estado se parte siempre del
+histograma ORIGINAL: el proceso no acumula.
+"""
 
 import base64
 import io
@@ -8,7 +26,17 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 CHANNELS = ("r", "g", "b")
-IDENTITY_LUT = np.arange(256, dtype=np.uint8)
+
+#: Una intensidad pertenece a la zona del pico si su cuenta supera este
+#: porcentaje del máximo del canal.
+PEAK_FRACTION = 0.45
+
+#: Multiplicador impar (Knuth) para mezclar posiciones de píxel de forma
+#: determinista al reasignar.
+_POSITION_HASH = np.uint64(2654435761)
+
+
+# --------------------------------------------------------------- imagen ---
 
 
 def load_image(data: bytes) -> np.ndarray:
@@ -28,6 +56,9 @@ def to_data_url(img: np.ndarray, fmt: str = "PNG") -> str:
     return f"data:{mime};base64,{b64}"
 
 
+# ---------------------------------------------------------- histogramas ---
+
+
 def channel_histogram(channel: np.ndarray) -> np.ndarray:
     """Histograma de 256 niveles de un canal uint8."""
     return np.bincount(np.asarray(channel).ravel(), minlength=256).astype(np.int64)
@@ -38,97 +69,140 @@ def compute_histograms(img: np.ndarray) -> dict:
     return {name: channel_histogram(img[:, :, i]) for i, name in enumerate(CHANNELS)}
 
 
-def equalization_lut(hist) -> np.ndarray:
-    """Tabla de transformación completa T_eq(k) a partir de un histograma de 256 bins.
-
-    T_eq(k) = floor((cdf(k) - cdf_min) / (N - cdf_min) * 255), recortado a [0, 255].
-
-    Si no existe variación suficiente (imagen constante, histograma vacío o todo
-    concentrado en un único nivel) se devuelve la transformación de identidad.
-    """
+def _as_histogram(hist) -> np.ndarray:
     h = np.asarray(hist, dtype=np.float64).ravel()
     if h.size != 256:
         raise ValueError("El histograma debe tener 256 niveles.")
     if np.any(h < 0):
         raise ValueError("El histograma no puede contener valores negativos.")
-
-    cdf = h.cumsum()
-    n_pixels = cdf[-1]
-    if n_pixels <= 0:
-        return IDENTITY_LUT.copy()
-
-    nonzero = np.flatnonzero(cdf)
-    cdf_min = cdf[nonzero[0]] if nonzero.size else 0.0
-    denom = n_pixels - cdf_min
-    if denom <= 0:
-        return IDENTITY_LUT.copy()
-
-    lut = np.floor((cdf - cdf_min) / denom * 255.0)
-    return np.clip(lut, 0, 255).astype(np.uint8)
+    return h
 
 
-def interpolate_lut(lut, p: float) -> np.ndarray:
-    """T_p(k) = (1 - p) * k + p * T_eq(k), redondeado y recortado a [0, 255].
+# --------------------------------------------------------- zona del pico ---
 
-    p es el porcentaje del slider normalizado entre 0 y 1.
+
+def peak_threshold(hist) -> float:
+    """Cuenta mínima para pertenecer a la zona del pico: 45 % del máximo."""
+    return float(_as_histogram(hist).max()) * PEAK_FRACTION
+
+
+def peak_mask(hist, fraction: float = PEAK_FRACTION) -> np.ndarray:
+    """Booleanos: qué intensidades forman la zona del pico (cuenta > umbral).
+
+    Si ninguna supera el umbral (histograma vacío o casi plano) se toma como
+    pico la intensidad con la cuenta máxima, para no quedarnos sin arena.
     """
-    p = float(p)
-    if not np.isfinite(p):
-        raise ValueError("El porcentaje debe ser un número finito.")
-    p = min(max(p, 0.0), 1.0)
-    base = np.asarray(lut, dtype=np.uint8).ravel()
-    if base.size != 256:
-        raise ValueError("La tabla de transformación debe tener 256 entradas.")
-
-    k = np.arange(256, dtype=np.float64)
-    out = np.rint((1.0 - p) * k + p * base.astype(np.float64))
-    return np.clip(out, 0, 255).astype(np.uint8)
+    h = _as_histogram(hist)
+    mask = h > h.max() * fraction
+    if not mask.any():
+        mask = h == h.max()
+    return mask if h.sum() > 0 else np.zeros(256, dtype=bool)
 
 
-def build_luts(img: np.ndarray) -> dict:
-    """Tablas T_eq de ecualización completa para R, G y B calculadas SIEMPRE
-    sobre el histograma de la imagen original."""
-    return {
-        name: equalization_lut(channel_histogram(img[:, :, i]))
-        for i, name in enumerate(CHANNELS)
-    }
+# ------------------------------------------- histograma objetivo (arena) ---
 
 
-def apply_lut(channel: np.ndarray, lut) -> np.ndarray:
-    """Aplica una tabla de transformación a un canal uint8."""
-    table = np.asarray(lut, dtype=np.uint8).ravel()
-    if table.size != 256:
-        raise ValueError("La tabla de transformación debe tener 256 entradas.")
-    return table[np.asarray(channel, dtype=np.uint8)]
+def _round_histogram(hist: np.ndarray, total: int) -> np.ndarray:
+    """Redondea un histograma fraccionario a enteros conservando el total."""
+    base = np.floor(hist).astype(np.int64)
+    resto = int(total) - int(base.sum())
+    if resto > 0:  # las partes fraccionarias más grandes se llevan +1
+        sobrantes = np.argsort(-(hist - base))[:resto]
+        base[sobrantes] += 1
+    return base
 
 
-def process_rgb(img: np.ndarray, p_r: float, p_g: float, p_b: float) -> np.ndarray:
-    """Ecualiza progresivamente los tres canales RGB de forma independiente.
+def sand_target_histogram(hist, percent: float, fraction: float = PEAK_FRACTION) -> np.ndarray:
+    """Histograma objetivo tras desinflar el pico y esparcir la arena.
 
-    p_r, p_g, p_b son porcentajes (0..100). El cálculo parte siempre de los
-    píxeles originales de `img`, por lo que no acumula transformaciones.
+    - Se quita del pico ``percent`` % de su exceso (la cuenta sobre el umbral).
+    - Esa cantidad se reparte POR IGUAL entre las intensidades que no son pico.
     """
-    luts = build_luts(img)
-    percents = {"r": p_r, "g": p_g, "b": p_b}
+    h = _as_histogram(hist)
+    n = int(h.sum())
+    if n <= 0:
+        return h.astype(np.int64)
 
-    out = np.empty_like(img)
-    for i, name in enumerate(CHANNELS):
-        table = interpolate_lut(luts[name], percents[name] / 100.0)
-        out[:, :, i] = apply_lut(img[:, :, i], table)
-    return out
+    p = min(max(float(percent), 0.0), 100.0) / 100.0
+    mask = peak_mask(h, fraction)
+    fuera = ~mask
+    if p == 0.0 or not fuera.any():
+        return h.astype(np.int64)
+
+    umbral = h.max() * fraction
+    exceso = np.maximum(h - umbral, 0.0)  # arena disponible en el pico
+    arena = p * exceso.sum()              # píxeles que se desprenden
+
+    objetivo = h - p * exceso             # el pico se desinfla
+    objetivo[fuera] += arena / fuera.sum()  # y la base se infla por igual
+    return _round_histogram(objetivo, n)
+
+
+# --------------------------------------------------- reasignación (píxel) ---
+
+
+def _assignment_order(flat: np.ndarray) -> np.ndarray:
+    """Orden determinista de los píxeles: por intensidad y, dentro de cada
+    intensidad, por un hash de su posición (evita bandas espaciales)."""
+    posiciones = np.arange(flat.size, dtype=np.uint64)
+    hash_pos = (posiciones * _POSITION_HASH) & np.uint64(0xFFFFFFFF)
+    return np.lexsort((hash_pos, flat))
+
+
+def sand_channel(channel: np.ndarray, percent: float, fraction: float = PEAK_FRACTION) -> np.ndarray:
+    """Aplica el efecto arena a un canal uint8 y devuelve el canal resultante.
+
+    El histograma de salida coincide exactamente con ``sand_target_histogram``.
+    """
+    ch = np.asarray(channel, dtype=np.uint8)
+    hist = channel_histogram(ch)
+    objetivo = sand_target_histogram(hist, percent, fraction)
+    if np.array_equal(objetivo, hist):  # 0 % (o sin arena): nada que hacer
+        return ch.copy()
+
+    # Lista de destinos: cada intensidad repetida tantas veces como píxeles
+    # debe tener en el resultado.
+    destinos = np.repeat(np.arange(256, dtype=np.uint8), objetivo)
+    orden = _assignment_order(ch.ravel())
+
+    salida = np.empty(ch.size, dtype=np.uint8)
+    salida[orden] = destinos  # el píxel más bajo recibe el destino más bajo
+    return salida.reshape(ch.shape)
+
+
+def sand_rgb(img: np.ndarray, p_r: float, p_g: float, p_b: float) -> np.ndarray:
+    """Aplica el efecto arena a los tres canales RGB de forma independiente."""
+    salida = np.empty_like(img)
+    for i, percent in enumerate((p_r, p_g, p_b)):
+        salida[:, :, i] = sand_channel(img[:, :, i], percent)
+    return salida
+
+
+# ---------------------------------------------------------- preparación ---
 
 
 def prepare_image(img: np.ndarray) -> dict:
-    """Histogramas originales y tablas T_eq completas (se calculan una sola vez)."""
+    """Histogramas originales y zona del pico de cada canal (se calculan una vez)."""
     hist = compute_histograms(img)
+    peaks = {}
+    for name in CHANNELS:
+        mask = np.flatnonzero(peak_mask(hist[name]))
+        peaks[name] = {
+            "inicio": int(mask[0]),
+            "fin": int(mask[-1]),
+            "umbral": peak_threshold(hist[name]),
+        }
     return {
         "hist_original": {name: hist[name].tolist() for name in CHANNELS},
-        "luts": {name: equalization_lut(hist[name]).tolist() for name in CHANNELS},
+        "peaks": peaks,
     }
 
 
+# ------------------------------------------------------ imagen de prueba ---
+
+
 def generate_sample_image(width: int = 480, height: int = 360) -> np.ndarray:
-    """Genera una imagen de prueba con bajo contraste (ideal para demostrar la ecualización)."""
+    """Genera una imagen de prueba con bajo contraste (ideal para demostrar el efecto)."""
     y = np.linspace(0, 1, height, dtype=np.float64)[:, None]
     x = np.linspace(0, 1, width, dtype=np.float64)[None, :]
 
