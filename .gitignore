@@ -1,0 +1,22 @@
+# Archivos del enunciado (no se versionan)
+promt.md
+Histogramas RGB*.png
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node / Astro
+node_modules/
+dist/
+.astro/
+.npm/
+
+# Entornos y sistema
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

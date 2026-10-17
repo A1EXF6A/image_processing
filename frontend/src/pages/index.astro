@@ -1,0 +1,746 @@
+---
+const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+---
+
+<!doctype html>
+<html lang="es">
+	<head>
+		<meta charset="utf-8" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" href="/favicon.ico" />
+		<meta name="viewport" content="width=device-width" />
+		<meta name="generator" content={Astro.generator} />
+		<title>Visor RGB · Ecualización interactiva</title>
+	</head>
+	<body data-api={API}>
+		<header>
+			<h1>Procesador de imágenes RGB</h1>
+			<p>Ecualización interactiva por canal &middot; 4 controles &middot; 8 histogramas</p>
+		</header>
+
+		<main>
+			<section class="controls">
+				<h2>Controles</h2>
+
+				<label class="file-field">
+					<span>Subir imagen</span>
+					<input id="file" type="file" accept="image/*" />
+				</label>
+
+				<button id="sample-btn" type="button" class="ghost">Usar imagen de ejemplo</button>
+
+				<div class="sliders">
+					<div class="slider" data-channel="all">
+						<div class="slider-head">
+							<span class="dot dot-all"></span>Ecualización general (RGB)
+							<output id="out-all">0%</output>
+						</div>
+						<input id="eq-all" type="range" min="0" max="100" value="0" step="1" class="range range-all" />
+						<p id="eq-hint" class="hint">R 0% · G 0% · B 0%</p>
+					</div>
+
+					<div class="slider" data-channel="r">
+						<div class="slider-head"><span class="dot dot-r"></span>Rojo (R)<output id="out-r">0%</output></div>
+						<input id="eq-r" type="range" min="0" max="100" value="0" step="1" class="range range-r" />
+					</div>
+					<div class="slider" data-channel="g">
+						<div class="slider-head"><span class="dot dot-g"></span>Verde (G)<output id="out-g">0%</output></div>
+						<input id="eq-g" type="range" min="0" max="100" value="0" step="1" class="range range-g" />
+					</div>
+					<div class="slider" data-channel="b">
+						<div class="slider-head"><span class="dot dot-b"></span>Azul (B)<output id="out-b">0%</output></div>
+						<input id="eq-b" type="range" min="0" max="100" value="0" step="1" class="range range-b" />
+					</div>
+				</div>
+
+				<div class="row">
+					<button id="reset-btn" type="button" class="ghost">Reiniciar</button>
+					<button id="download-btn" type="button" class="ghost">Descargar</button>
+				</div>
+
+				<p id="status" class="status">Cargando imagen de ejemplo…</p>
+			</section>
+
+			<section class="preview">
+				<h2>Vista previa</h2>
+				<div class="images">
+					<figure>
+						<figcaption>Original</figcaption>
+						<div class="frame"><img id="img-before" alt="Imagen original" /></div>
+					</figure>
+					<figure>
+						<figcaption>Procesada <small>(ecualización aplicada)</small></figcaption>
+						<div class="frame"><img id="img-after" alt="Imagen procesada" /></div>
+					</figure>
+				</div>
+			</section>
+
+			<section class="histograms">
+				<h2>Histogramas</h2>
+				<div class="charts">
+					<figure>
+						<figcaption>1 · RGB original</figcaption>
+						<canvas id="hist-rgb-before" class="hist"></canvas>
+						<ul class="legend">
+							<li><span class="dot dot-r"></span>R</li>
+							<li><span class="dot dot-g"></span>G</li>
+							<li><span class="dot dot-b"></span>B</li>
+						</ul>
+					</figure>
+					<figure>
+						<figcaption>2 · RGB actualizado</figcaption>
+						<canvas id="hist-rgb-after" class="hist"></canvas>
+						<ul class="legend">
+							<li><span class="dot dot-r"></span>R</li>
+							<li><span class="dot dot-g"></span>G</li>
+							<li><span class="dot dot-b"></span>B</li>
+						</ul>
+					</figure>
+
+					<figure>
+						<figcaption>3 · <span class="dot dot-r"></span> R original</figcaption>
+						<canvas id="hist-r-before" class="hist"></canvas>
+					</figure>
+					<figure>
+						<figcaption>4 · <span class="dot dot-r"></span> R actualizado</figcaption>
+						<canvas id="hist-r-after" class="hist"></canvas>
+					</figure>
+
+					<figure>
+						<figcaption>5 · <span class="dot dot-g"></span> G original</figcaption>
+						<canvas id="hist-g-before" class="hist"></canvas>
+					</figure>
+					<figure>
+						<figcaption>6 · <span class="dot dot-g"></span> G actualizado</figcaption>
+						<canvas id="hist-g-after" class="hist"></canvas>
+					</figure>
+
+					<figure>
+						<figcaption>7 · <span class="dot dot-b"></span> B original</figcaption>
+						<canvas id="hist-b-before" class="hist"></canvas>
+					</figure>
+					<figure>
+						<figcaption>8 · <span class="dot dot-b"></span> B actualizado</figcaption>
+						<canvas id="hist-b-after" class="hist"></canvas>
+					</figure>
+				</div>
+			</section>
+		</main>
+
+		<script>
+			import {
+				CHANNELS,
+				processRgba,
+				histogramsFromRgba,
+				setGeneral,
+				setChannel,
+				generalState,
+				channelSummary,
+			} from "../lib/equalize.js";
+
+			const API = document.body.dataset.api || "http://127.0.0.1:8000";
+
+			const fileInput = document.getElementById("file") as HTMLInputElement;
+			const sampleBtn = document.getElementById("sample-btn") as HTMLButtonElement;
+			const resetBtn = document.getElementById("reset-btn") as HTMLButtonElement;
+			const downloadBtn = document.getElementById("download-btn") as HTMLButtonElement;
+			const statusEl = document.getElementById("status") as HTMLParagraphElement;
+			const imgBefore = document.getElementById("img-before") as HTMLImageElement;
+			const imgAfter = document.getElementById("img-after") as HTMLImageElement;
+			const hintEl = document.getElementById("eq-hint") as HTMLParagraphElement;
+
+			const sliders = {
+				all: document.getElementById("eq-all") as HTMLInputElement,
+				r: document.getElementById("eq-r") as HTMLInputElement,
+				g: document.getElementById("eq-g") as HTMLInputElement,
+				b: document.getElementById("eq-b") as HTMLInputElement,
+			};
+			const outputs = {
+				all: document.getElementById("out-all") as HTMLOutputElement,
+				r: document.getElementById("out-r") as HTMLOutputElement,
+				g: document.getElementById("out-g") as HTMLOutputElement,
+				b: document.getElementById("out-b") as HTMLOutputElement,
+			};
+
+			const COLORS = { r: "#ff5c5c", g: "#4ade80", b: "#60a5fa" };
+
+			const PAIRS = [
+				{ before: "hist-rgb-before", after: "hist-rgb-after", channels: [...CHANNELS] },
+				{ before: "hist-r-before", after: "hist-r-after", channels: ["r"] },
+				{ before: "hist-g-before", after: "hist-g-after", channels: ["g"] },
+				{ before: "hist-b-before", after: "hist-b-after", channels: ["b"] },
+			];
+
+			let sourceBlob: Blob | null = null;
+			let sourceName = "sample.png";
+			let prepared: {
+				width: number;
+				height: number;
+				rgba: Uint8ClampedArray;
+				luts: { r: number[]; g: number[]; b: number[] };
+				histOriginal: { r: number[]; g: number[]; b: number[] };
+			} | null = null;
+			let pct = { r: 0, g: 0, b: 0 };
+			let lastHists: {
+				before: { r: number[]; g: number[]; b: number[] };
+				after: { r: number[]; g: number[]; b: number[] };
+			} | null = null;
+			let renderTimer: number | undefined;
+			let requestId = 0;
+
+			const outCanvas = document.createElement("canvas");
+			const outCtx = outCanvas.getContext("2d")!;
+
+			function setStatus(text: string, isError = false) {
+				statusEl.textContent = text;
+				statusEl.classList.toggle("error", isError);
+			}
+
+			function hexToRgba(hex: string, alpha: number) {
+				const n = parseInt(hex.slice(1), 16);
+				return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+			}
+
+			function percentile(values: number[], p: number) {
+				if (!values.length) return 1;
+				const sorted = [...values].sort((a, b) => a - b);
+				const idx = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
+				return sorted[idx] || 1;
+			}
+
+			function drawHistogram(
+				canvas: HTMLCanvasElement,
+				series: { color: string; data: number[] }[],
+				yMax: number,
+			) {
+				const dpr = window.devicePixelRatio || 1;
+				const cssW = canvas.clientWidth || 520;
+				const cssH = canvas.clientHeight || 220;
+				canvas.width = Math.round(cssW * dpr);
+				canvas.height = Math.round(cssH * dpr);
+
+				const ctx = canvas.getContext("2d");
+				if (!ctx) return;
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				ctx.clearRect(0, 0, cssW, cssH);
+
+				const pad = { top: 12, right: 10, bottom: 20, left: 10 };
+				const plotW = cssW - pad.left - pad.right;
+				const plotH = cssH - pad.top - pad.bottom;
+
+				ctx.fillStyle = "#0e1424";
+				ctx.fillRect(0, 0, cssW, cssH);
+
+				ctx.strokeStyle = "rgba(255,255,255,0.07)";
+				ctx.fillStyle = "rgba(255,255,255,0.4)";
+				ctx.font = "10px ui-monospace, monospace";
+				ctx.textAlign = "center";
+				for (let i = 0; i <= 4; i++) {
+					const val = Math.round((i * 255) / 4);
+					const x = pad.left + (val / 255) * plotW;
+					ctx.beginPath();
+					ctx.moveTo(x, pad.top);
+					ctx.lineTo(x, pad.top + plotH);
+					ctx.stroke();
+					ctx.fillText(String(val), x, cssH - 6);
+				}
+
+				for (const s of series) {
+					ctx.beginPath();
+					ctx.moveTo(pad.left, pad.top + plotH);
+					for (let i = 0; i < 256; i++) {
+						const x = pad.left + (i / 255) * plotW;
+						const y = pad.top + plotH - Math.min(s.data[i] / yMax, 1) * plotH;
+						ctx.lineTo(x, y);
+					}
+					ctx.lineTo(pad.left + plotW, pad.top + plotH);
+					ctx.closePath();
+					ctx.fillStyle = hexToRgba(s.color, 0.16);
+					ctx.fill();
+					ctx.strokeStyle = s.color;
+					ctx.lineWidth = 1.2;
+					ctx.stroke();
+				}
+			}
+
+			function seriesFor(hist: { r: number[]; g: number[]; b: number[] }, channels: string[]) {
+				return channels.map((ch) => ({
+					color: COLORS[ch as keyof typeof COLORS],
+					data: hist[ch as keyof typeof hist],
+				}));
+			}
+
+			function renderHistograms(
+				before: { r: number[]; g: number[]; b: number[] },
+				after: { r: number[]; g: number[]; b: number[] },
+			) {
+				for (const pair of PAIRS) {
+					const sBefore = seriesFor(before, pair.channels);
+					const sAfter = seriesFor(after, pair.channels);
+					const all: number[] = [];
+					for (const s of [...sBefore, ...sAfter]) all.push(...s.data);
+					const yMax = Math.max(percentile(all, 0.985), 1);
+
+					const elBefore = document.getElementById(pair.before) as HTMLCanvasElement;
+					const elAfter = document.getElementById(pair.after) as HTMLCanvasElement;
+					drawHistogram(elBefore, sBefore, yMax);
+					drawHistogram(elAfter, sAfter, yMax);
+				}
+			}
+
+			function syncControls() {
+				const general = generalState(pct);
+				if (Number(sliders.all.value) !== general.value) {
+					sliders.all.value = String(general.value);
+				}
+				outputs.all.textContent = general.label;
+				outputs.all.classList.toggle("mixed", !general.synced);
+				for (const ch of CHANNELS) {
+					const el = sliders[ch as keyof typeof sliders];
+					if (Number(el.value) !== pct[ch]) el.value = String(pct[ch]);
+					outputs[ch as keyof typeof outputs].textContent = `${pct[ch]}%`;
+				}
+				hintEl.textContent = channelSummary(pct);
+				hintEl.classList.toggle("mixed", !general.synced);
+			}
+
+			function render() {
+				if (!prepared) return;
+				const { rgba, luts, width, height, histOriginal } = prepared;
+				const out = processRgba(rgba, luts, pct);
+
+				if (outCanvas.width !== width || outCanvas.height !== height) {
+					outCanvas.width = width;
+					outCanvas.height = height;
+				}
+				outCtx.putImageData(new ImageData(out, width, height), 0, 0);
+				imgAfter.src = outCanvas.toDataURL("image/png");
+
+				const after = histogramsFromRgba(out);
+				lastHists = { before: histOriginal, after };
+				renderHistograms(lastHists.before, lastHists.after);
+				setStatus(`Listo · ${width}×${height}px · ${channelSummary(pct)}`);
+			}
+
+			function scheduleRender() {
+				window.clearTimeout(renderTimer);
+				renderTimer = window.setTimeout(render, 60);
+			}
+
+			async function decodeImage(dataUrl: string) {
+				const img = new Image();
+				img.src = dataUrl;
+				await img.decode();
+				return img;
+			}
+
+			async function loadImage(blob: Blob, name: string) {
+				const id = ++requestId;
+				setStatus("Procesando…");
+
+				const form = new FormData();
+				form.append("file", blob, name);
+
+				try {
+					const res = await fetch(`${API}/api/prepare`, { method: "POST", body: form });
+					if (!res.ok) throw new Error(`El servidor respondió ${res.status}`);
+					const data = await res.json();
+					if (id !== requestId) return;
+
+					const img = await decodeImage(data.image_before);
+					const width = img.naturalWidth;
+					const height = img.naturalHeight;
+
+					const canvas = document.createElement("canvas");
+					canvas.width = width;
+					canvas.height = height;
+					const ctx = canvas.getContext("2d", { willReadFrequently: true });
+					if (!ctx) throw new Error("No se pudo crear el lienzo de trabajo.");
+					ctx.drawImage(img, 0, 0);
+					const imageData = ctx.getImageData(0, 0, width, height);
+
+					sourceBlob = blob;
+					sourceName = name;
+					prepared = {
+						width,
+						height,
+						rgba: imageData.data,
+						luts: data.luts,
+						histOriginal: data.hist_original,
+					};
+					imgBefore.src = data.image_before;
+					render();
+				} catch (err) {
+					if (id !== requestId) return;
+					const message = err instanceof Error ? err.message : String(err);
+					setStatus(`Error: ${message}. ¿Está corriendo el backend en ${API}?`, true);
+				}
+			}
+
+			async function loadSample() {
+				setStatus("Cargando imagen de ejemplo…");
+				try {
+					const res = await fetch(`${API}/api/sample`);
+					if (!res.ok) throw new Error(`El servidor respondió ${res.status}`);
+					const blob = await res.blob();
+					await loadImage(blob, "sample.png");
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					setStatus(`No se pudo cargar la muestra desde ${API}. ${message}`, true);
+				}
+			}
+
+			fileInput.addEventListener("change", () => {
+				const f = fileInput.files && fileInput.files[0];
+				if (!f) return;
+				loadImage(f, f.name);
+			});
+
+			sampleBtn.addEventListener("click", loadSample);
+
+			sliders.all.addEventListener("input", () => {
+				pct = setGeneral(pct, sliders.all.value);
+				syncControls();
+				scheduleRender();
+			});
+
+			for (const ch of CHANNELS) {
+				const el = sliders[ch as keyof typeof sliders];
+				el.addEventListener("input", () => {
+					pct = setChannel(pct, ch, el.value);
+					syncControls();
+					scheduleRender();
+				});
+			}
+
+			resetBtn.addEventListener("click", () => {
+				pct = setGeneral(pct, 0);
+				syncControls();
+				scheduleRender();
+			});
+
+			downloadBtn.addEventListener("click", () => {
+				if (!imgAfter.src) return;
+				const a = document.createElement("a");
+				a.href = imgAfter.src;
+				a.download =
+					pct.r === 0 && pct.g === 0 && pct.b === 0
+						? "imagen-original.png"
+						: "imagen-ecualizada.png";
+				a.click();
+			});
+
+			window.addEventListener("resize", () => {
+				if (lastHists) renderHistograms(lastHists.before, lastHists.after);
+			});
+
+			syncControls();
+			loadSample();
+		</script>
+
+		<style is:global>
+			:root {
+				color-scheme: dark;
+				--bg: #0a0e17;
+				--panel: #111a2e;
+				--panel-2: #16203a;
+				--border: #223052;
+				--text: #e6ecf7;
+				--muted: #8ea0c2;
+				--accent: #6ea8fe;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				background: radial-gradient(1200px 600px at 50% -100px, #16233f 0%, var(--bg) 60%);
+				color: var(--text);
+				font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+				min-height: 100vh;
+			}
+
+			header {
+				padding: 28px 24px 8px;
+				text-align: center;
+			}
+
+			header h1 {
+				margin: 0 0 6px;
+				font-size: 1.6rem;
+				letter-spacing: 0.2px;
+			}
+
+			header p {
+				margin: 0;
+				color: var(--muted);
+				font-size: 0.9rem;
+			}
+
+			main {
+				max-width: 1180px;
+				margin: 0 auto;
+				padding: 20px 24px 60px;
+				display: grid;
+				grid-template-columns: 320px 1fr;
+				gap: 20px;
+			}
+
+			section {
+				background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+				border: 1px solid var(--border);
+				border-radius: 16px;
+				padding: 18px;
+			}
+
+			section h2 {
+				margin: 0 0 14px;
+				font-size: 1rem;
+				color: var(--accent);
+				text-transform: uppercase;
+				letter-spacing: 1px;
+			}
+
+			.controls {
+				display: flex;
+				flex-direction: column;
+				gap: 16px;
+				grid-row: span 2;
+			}
+
+			.file-field {
+				display: flex;
+				flex-direction: column;
+				gap: 6px;
+				font-size: 0.85rem;
+				color: var(--muted);
+			}
+
+			.file-field input {
+				color: var(--text);
+				font-size: 0.85rem;
+			}
+
+			button {
+				cursor: pointer;
+				border-radius: 10px;
+				padding: 10px 14px;
+				font-size: 0.88rem;
+				border: 1px solid var(--border);
+				transition: border-color 0.15s, background 0.15s;
+			}
+
+			button.ghost {
+				background: #1b2740;
+				color: var(--text);
+			}
+
+			button.ghost:hover {
+				border-color: var(--accent);
+				background: #223255;
+			}
+
+			.sliders {
+				display: flex;
+				flex-direction: column;
+				gap: 16px;
+			}
+
+			.slider {
+				padding-bottom: 4px;
+			}
+
+			.slider-head {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				font-size: 0.85rem;
+				margin-bottom: 6px;
+				color: var(--muted);
+			}
+
+			.slider-head output {
+				margin-left: auto;
+				font-family: ui-monospace, monospace;
+				color: var(--text);
+			}
+
+			.slider-head output.mixed {
+				color: #ffc46b;
+			}
+
+			.hint {
+				margin: 6px 0 0;
+				font-size: 0.75rem;
+				font-family: ui-monospace, monospace;
+				color: var(--muted);
+			}
+
+			.hint.mixed {
+				color: #ffc46b;
+			}
+
+			.dot {
+				width: 10px;
+				height: 10px;
+				border-radius: 50%;
+				display: inline-block;
+			}
+
+			.dot-r { background: #ff5c5c; }
+			.dot-g { background: #4ade80; }
+			.dot-b { background: #60a5fa; }
+			.dot-all { background: linear-gradient(135deg, #ff5c5c, #4ade80, #60a5fa); }
+
+			input[type="range"] {
+				width: 100%;
+				-webkit-appearance: none;
+				appearance: none;
+				height: 6px;
+				border-radius: 999px;
+				background: #26324f;
+				outline: none;
+			}
+
+			input[type="range"]::-webkit-slider-thumb {
+				-webkit-appearance: none;
+				appearance: none;
+				width: 16px;
+				height: 16px;
+				border-radius: 50%;
+				border: 2px solid #0a0e17;
+				cursor: pointer;
+			}
+
+			input[type="range"]::-moz-range-thumb {
+				width: 14px;
+				height: 14px;
+				border-radius: 50%;
+				border: 2px solid #0a0e17;
+				cursor: pointer;
+			}
+
+			.range-all::-webkit-slider-thumb { background: #6ea8fe; }
+			.range-r::-webkit-slider-thumb { background: #ff5c5c; }
+			.range-g::-webkit-slider-thumb { background: #4ade80; }
+			.range-b::-webkit-slider-thumb { background: #60a5fa; }
+			.range-all::-moz-range-thumb { background: #6ea8fe; }
+			.range-r::-moz-range-thumb { background: #ff5c5c; }
+			.range-g::-moz-range-thumb { background: #4ade80; }
+			.range-b::-moz-range-thumb { background: #60a5fa; }
+
+			.row {
+				display: flex;
+				gap: 10px;
+			}
+
+			.row button {
+				flex: 1;
+			}
+
+			.status {
+				margin: 0;
+				font-size: 0.78rem;
+				color: var(--muted);
+				min-height: 1.2em;
+			}
+
+			.status.error {
+				color: #ff8080;
+			}
+
+			.preview .images {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 14px;
+			}
+
+			figure {
+				margin: 0;
+			}
+
+			figcaption {
+				font-size: 0.82rem;
+				color: var(--muted);
+				margin-bottom: 8px;
+			}
+
+			figcaption .dot {
+				vertical-align: middle;
+			}
+
+			figcaption small {
+				color: #5f7194;
+			}
+
+			.frame {
+				background: #0b1020;
+				border: 1px solid var(--border);
+				border-radius: 12px;
+				overflow: hidden;
+				aspect-ratio: 4 / 3;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+
+			.frame img {
+				max-width: 100%;
+				max-height: 100%;
+				display: block;
+			}
+
+			.histograms {
+				grid-column: 2;
+			}
+
+			.charts {
+				display: grid;
+				grid-template-columns: 1fr 1fr;
+				gap: 16px;
+			}
+
+			canvas.hist {
+				width: 100%;
+				height: 200px;
+				border: 1px solid var(--border);
+				border-radius: 12px;
+				display: block;
+			}
+
+			.legend {
+				display: flex;
+				gap: 16px;
+				list-style: none;
+				margin: 10px 0 0;
+				padding: 0;
+				font-size: 0.78rem;
+				color: var(--muted);
+			}
+
+			.legend li {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+			}
+
+			@media (max-width: 900px) {
+				main {
+					grid-template-columns: 1fr;
+				}
+				.controls {
+					grid-row: auto;
+				}
+				.histograms {
+					grid-column: 1;
+				}
+				.preview .images,
+				.charts {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</body>
+</html>
