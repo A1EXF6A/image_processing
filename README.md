@@ -76,7 +76,9 @@ Abre el navegador en `http://localhost:4321`.
 ## Uso
 
 - **4 sliders de nivel de corte** (General + R/G/B): deciden cuánta montaña se recorta en cada
-  canal. Más bajo = más agresivo. El general sincroniza los tres; si difieren, muestra «Mixto» y
+  canal. Los sliders van **invertidos**: a la **izquierda** el nivel está **arriba** (100 %, sin
+  efecto) y a medida que se deslizan hacia la **derecha** el nivel **baja** (hasta 5 %, más
+  agresivo). El general sincroniza los tres; si difieren, muestra «Mixto» y
   la línea inferior indica `R 20% · G 20% · B 20%`.
 - **Reiniciar** devuelve los cuatro controles a 20 %.
 - **Descargar** guarda el resultado en PNG.
