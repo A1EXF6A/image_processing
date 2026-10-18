@@ -23,8 +23,8 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
               <figcaption><span class="dot dot-r"></span> Red</figcaption>
               <canvas id="hist-r-before" class="hist"></canvas>
               <div class="slider" data-channel="r">
-                <div class="slider-head">Rojo (R) · nivel<output id="out-r">100%</output></div>
-                <input id="eq-r" type="range" min="0" max="100" value="0" step="1" class="range range-r" />
+                <div class="slider-head">Rojo (R) · recorte<output id="out-r">0%</output></div>
+                <input id="eq-r" type="range" min="0" max="95" value="0" step="1" class="range range-r" />
               </div>
             </figure>
 
@@ -32,8 +32,8 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
               <figcaption><span class="dot dot-g"></span> Green</figcaption>
               <canvas id="hist-g-before" class="hist"></canvas>
               <div class="slider" data-channel="g">
-                <div class="slider-head">Verde (G) · nivel<output id="out-g">100%</output></div>
-                <input id="eq-g" type="range" min="0" max="100" value="0" step="1" class="range range-g" />
+                <div class="slider-head">Verde (G) · recorte<output id="out-g">0%</output></div>
+                <input id="eq-g" type="range" min="0" max="95" value="0" step="1" class="range range-g" />
               </div>
             </figure>
 
@@ -41,8 +41,8 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
               <figcaption><span class="dot dot-b"></span> Blue</figcaption>
               <canvas id="hist-b-before" class="hist"></canvas>
               <div class="slider" data-channel="b">
-                <div class="slider-head">Azul (B) · nivel<output id="out-b">100%</output></div>
-                <input id="eq-b" type="range" min="0" max="100" value="0" step="1" class="range range-b" />
+                <div class="slider-head">Azul (B) · recorte<output id="out-b">0%</output></div>
+                <input id="eq-b" type="range" min="0" max="95" value="0" step="1" class="range range-b" />
               </div>
             </figure>
           </div>
@@ -70,12 +70,11 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				<div class="sliders">
 					<div class="slider" data-channel="all">
 						<div class="slider-head">
-							General (RGB) · nivel
-							<output id="out-all">100%</output>
+							General (RGB) · recorte
+							<output id="out-all">0%</output>
 						</div>
-						<input id="eq-all" type="range" min="0" max="100" value="0" step="1" class="range range-all" />
-						<p id="eq-hint" class="hint">R 100% · G 100% · B 100%</p>
-						<p class="hint">0 = corte arriba (100%, sin efecto) · a la derecha el nivel baja (hasta 5%) · pico fijo 40</p>
+						<input id="eq-all" type="range" min="0" max="95" value="0" step="1" class="range range-all" />
+						<p id="eq-hint" class="hint">R 0% · G 0% · B 0%</p>
 					</div>
 				</div>
 
@@ -83,8 +82,6 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 					<button id="reset-btn" type="button" class="ghost">Reiniciar</button>
 					<button id="download-btn" type="button" class="ghost">Descargar</button>
 				</div>
-
-				<p id="status" class="status">Cargando imagen de ejemplo…</p>
 			</section>
 
 			<section class="preview">
@@ -119,23 +116,21 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 			const API = document.body.dataset.api || "http://127.0.0.1:8000";
 
-			// Los sliders controlan el NIVEL DE CORTE (% del máximo) de cada canal.
+			// Los sliders controlan el RECORTE del pico (0-95) de cada canal.
 			// El recorte del pico ("pico") queda fijo en el backend (40).
 			//
-			// El valor del slider es la "cantidad de recorte" 0-100: 0 (por defecto)
-			// deja el corte arriba (nivel 100 %, sin efecto) y 100 lo baja al 5 %.
-			// Así el nivel baja a medida que el slider avanza hacia la derecha.
-			const DEFAULT_NIVEL = 100; // corte arriba = sin recorte
-			const NIVEL_MIN = 5; // máximo recorte
+			// El valor del slider es la cantidad de recorte: 0 (por defecto, a la
+			// izquierda) = sin recorte (nivel 100 %) y 95 (a la derecha) = recorte
+			// máximo (nivel 5 %). El nivel va inverso al valor del slider.
+			const DEFAULT_POS = 0; // sin recorte
+			const NIVEL_MIN = 5; // nivel mínimo = recorte máximo
 			const NIVEL_MAX = 100;
-			const nivelDesdeSlider = (pos: number) => Math.min(NIVEL_MAX, Math.max(NIVEL_MIN, NIVEL_MAX - Number(pos)));
-			const sliderDesdeNivel = (nivel: number) => Math.min(100, Math.max(0, NIVEL_MAX - Number(nivel)));
+			const nivelDesdePos = (pos: number) => Math.min(NIVEL_MAX, Math.max(NIVEL_MIN, NIVEL_MAX - Number(pos)));
 
 			const fileInput = document.getElementById("file") as HTMLInputElement;
 			const sampleBtn = document.getElementById("sample-btn") as HTMLButtonElement;
 			const resetBtn = document.getElementById("reset-btn") as HTMLButtonElement;
 			const downloadBtn = document.getElementById("download-btn") as HTMLButtonElement;
-			const statusEl = document.getElementById("status") as HTMLParagraphElement;
 			const imgBefore = document.getElementById("img-before") as HTMLImageElement;
 			const imgAfter = document.getElementById("img-after") as HTMLImageElement;
 			const hintEl = document.getElementById("eq-hint") as HTMLParagraphElement;
@@ -172,16 +167,11 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				histOriginal: Hists;
 				peaks: { r: PeakInfo; g: PeakInfo; b: PeakInfo };
 			} | null = null;
-			let pct = { r: DEFAULT_NIVEL, g: DEFAULT_NIVEL, b: DEFAULT_NIVEL };
+			let pct = { r: DEFAULT_POS, g: DEFAULT_POS, b: DEFAULT_POS };
 			let lastHists: { before: Hists; after: Hists } | null = null;
 			let renderTimer: number | undefined;
 			let requestId = 0;
 			let renderId = 0;
-
-			function setStatus(text: string, isError = false) {
-				statusEl.textContent = text;
-				statusEl.classList.toggle("error", isError);
-			}
 
 			function hexToRgba(hex: string, alpha: number) {
 				const n = parseInt(hex.slice(1), 16);
@@ -276,18 +266,14 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 			function syncControls(skip?: HTMLInputElement) {
 				const general = generalState(pct);
-				if (sliders.all !== skip) {
-					const pos = sliderDesdeNivel(general.value);
-					if (Number(sliders.all.value) !== pos) sliders.all.value = String(pos);
+				if (sliders.all !== skip && Number(sliders.all.value) !== general.value) {
+					sliders.all.value = String(general.value);
 				}
 				outputs.all.textContent = general.label;
 				outputs.all.classList.toggle("mixed", !general.synced);
 				for (const ch of CHANNELS) {
 					const el = sliders[ch as keyof typeof sliders];
-					if (el !== skip) {
-						const pos = sliderDesdeNivel(pct[ch]);
-						if (Number(el.value) !== pos) el.value = String(pos);
-					}
+					if (el !== skip && Number(el.value) !== pct[ch]) el.value = String(pct[ch]);
 					outputs[ch as keyof typeof outputs].textContent = `${pct[ch]}%`;
 				}
 				hintEl.textContent = channelSummary(pct);
@@ -299,9 +285,9 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				const id = ++renderId;
 				const form = new FormData();
 				form.append("file", sourceBlob, sourceName);
-				form.append("nivel_r", String(Math.round(pct.r)));
-				form.append("nivel_g", String(Math.round(pct.g)));
-				form.append("nivel_b", String(Math.round(pct.b)));
+				form.append("nivel_r", String(Math.round(nivelDesdePos(pct.r))));
+				form.append("nivel_g", String(Math.round(nivelDesdePos(pct.g))));
+				form.append("nivel_b", String(Math.round(nivelDesdePos(pct.b))));
 				form.append("format", "jpeg");
 
 				fetch(`${API}/api/process`, { method: "POST", body: form })
@@ -317,14 +303,9 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 						imgAfter.src = data.image_after;
 						lastHists = { before: prepared!.histOriginal, after: data.hist_after };
 						renderHistograms(lastHists.before, lastHists.after);
-						setStatus(
-							`Listo · ${prepared!.width}×${prepared!.height}px · ${channelSummary(pct)} · arena activo`
-						);
 					})
-					.catch((err) => {
-						if (id !== renderId) return;
-						const message = err instanceof Error ? err.message : String(err);
-						setStatus(`Error: ${message}`, true);
+					.catch(() => {
+						// Sin mensajes de estado.
 					});
 			}
 
@@ -342,7 +323,6 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 			async function loadImage(blob: Blob, name: string) {
 				const id = ++requestId;
-				setStatus("Procesando…");
 
 				const form = new FormData();
 				form.append("file", blob, name);
@@ -375,23 +355,19 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 					};
 					imgBefore.src = data.image_before;
 					render();
-				} catch (err) {
-					if (id !== requestId) return;
-					const message = err instanceof Error ? err.message : String(err);
-					setStatus(`Error: ${message}. ¿Está corriendo el backend en ${API}?`, true);
+				} catch {
+					// Sin mensajes de estado.
 				}
 			}
 
 			async function loadSample() {
-				setStatus("Cargando imagen de ejemplo…");
 				try {
 					const res = await fetch(`${API}/api/sample`);
 					if (!res.ok) throw new Error(`El servidor respondió ${res.status}`);
 					const blob = await res.blob();
 					await loadImage(blob, "sample.png");
-				} catch (err) {
-					const message = err instanceof Error ? err.message : String(err);
-					setStatus(`No se pudo cargar la muestra desde ${API}. ${message}`, true);
+				} catch {
+					// Sin mensajes de estado.
 				}
 			}
 
@@ -404,7 +380,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			sampleBtn.addEventListener("click", loadSample);
 
 			sliders.all.addEventListener("input", () => {
-				pct = setGeneral(pct, nivelDesdeSlider(sliders.all.value));
+				pct = setGeneral(pct, sliders.all.value);
 				syncControls(sliders.all);
 				scheduleRender();
 			});
@@ -412,14 +388,14 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 			for (const ch of CHANNELS) {
 				const el = sliders[ch as keyof typeof sliders];
 				el.addEventListener("input", () => {
-					pct = setChannel(pct, ch, nivelDesdeSlider(el.value));
+					pct = setChannel(pct, ch, el.value);
 					syncControls(el);
 					scheduleRender();
 				});
 			}
 
 			resetBtn.addEventListener("click", () => {
-				pct = setGeneral(pct, DEFAULT_NIVEL);
+				pct = setGeneral(pct, DEFAULT_POS);
 				syncControls();
 				scheduleRender();
 			});
@@ -429,7 +405,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				const a = document.createElement("a");
 				a.href = imgAfter.src;
 				a.download =
-					pct.r === 100 && pct.g === 100 && pct.b === 100
+					pct.r === 0 && pct.g === 0 && pct.b === 0
 						? "imagen-original.png"
 						: "imagen-arena.png";
 				a.click();
@@ -643,17 +619,6 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 			.row button {
 				flex: 1;
-			}
-
-			.status {
-				margin: 0;
-				font-size: 0.78rem;
-				color: var(--muted);
-				min-height: 1.2em;
-			}
-
-			.status.error {
-				color: var(--error-ink);
 			}
 
       .preview {
