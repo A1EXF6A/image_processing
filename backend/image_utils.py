@@ -11,8 +11,10 @@ Efecto arena (por canal, de forma independiente)
      proporcionalmente más, así el pico deja de ser un pincho sin volverse
      una línea recta. Solo se tocan los bins por encima del nivel, nunca los
      vecinos (no se reparte a los bins de al lado).
-3. La arena recortada se reparte POR IGUAL entre las intensidades que quedan
-   por debajo del nivel: la base se infla de forma uniforme.
+3. La arena recortada se reparte POR IGUAL entre TODAS las intensidades
+   (0-255): la base se infla, pero cuando el nivel es muy bajo (la base es
+   diminuta) la arena no se concentra en unos pocos bins formando picos
+   nuevos, sino que se reparte por todo el rango y el histograma se aplana.
 4. Los píxeles se reasignan de forma determinista: se ordenan por intensidad
    y, dentro de cada intensidad, por un hash de su posición (así el reparto
    no forma bandas). El histograma de la imagen resultante es, exactamente,
@@ -145,8 +147,10 @@ def sand_target_histogram(hist, nivel: float = 20.0, pico: float = 40.0) -> np.n
     """Histograma objetivo tras recortar la montaña y esparcir la arena.
 
     - Se recorta el exceso sobre el nivel con la curva de ``_soft_clip``.
-    - La arena recortada se reparte POR IGUAL entre las intensidades que
-      quedan por debajo del nivel.
+    - La arena recortada se reparte POR IGUAL entre TODAS las intensidades
+      (0-255), no solo entre las que quedan por debajo del nivel. Así, con
+      niveles muy bajos (base diminuta) la arena no se concentra en unos
+      pocos bins y no aparecen picos nuevos: el histograma se aplana.
     """
     h = _as_histogram(hist)
     n = int(h.sum())
@@ -164,7 +168,7 @@ def sand_target_histogram(hist, nivel: float = 20.0, pico: float = 40.0) -> np.n
     objetivo = h.copy()
     objetivo[mask] = umbral + _soft_clip(exceso[mask], umbral, p)
     arena = h[mask].sum() - objetivo[mask].sum()  # píxeles que se desprenden
-    objetivo[fuera] += arena / fuera.sum()        # la base se infla por igual
+    objetivo += arena / objetivo.size             # la arena se reparte por igual
     return _round_histogram(objetivo, int(h.sum()))
 
 

@@ -10,7 +10,7 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 		<link rel="icon" href="/favicon.ico" />
 		<meta name="viewport" content="width=device-width" />
 		<meta name="generator" content={Astro.generator} />
-		<title>Visor RGB · Efecto arena</title>
+		<title>Deber procesamiento imagenes</title>
 	</head>
 	<body data-api={API}>
 		<main>
@@ -250,10 +250,11 @@ const API = import.meta.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 				for (const pair of PAIRS) {
 					const sBefore = seriesFor(before, pair.channels);
 					const sAfter = seriesFor(after, pair.channels);
+					// Escala fija a partir del histograma ORIGINAL: así el panel
+					// "antes" no se modifica al mover el recorte y la bajada del
+					// pico se ve comparando ambos con la misma referencia.
 					const all: number[] = [];
-					for (const s of [...sBefore, ...sAfter]) all.push(...s.data);
-					// Usamos el máximo real (el pico original) para que la bajada
-					// del pico sea visible; la raíz cuadrada compensa la base.
+					for (const s of sBefore) all.push(...s.data);
 					const yMax = Math.max(...all, 1);
 
 					const elBefore = document.getElementById(pair.before) as HTMLCanvasElement | null;
