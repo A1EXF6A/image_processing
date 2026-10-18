@@ -1,83 +1,63 @@
-"""Procesamiento de imágenes: histogramas RGB y efecto "arena" por canal.
-
-Efecto arena (por canal, de forma independiente)
------------------------------------------------
-1. NIVEL DE CORTE: ``nivel`` (0-100) fija una línea al ``nivel`` % del máximo
-   del canal. Todo lo que queda por encima de esa línea es la "montaña".
-2. RECORTE CURVO: ``pico`` (0-100, por defecto 40) decide cuánto baja la cima.
-   - ``pico = 100``  -> no se recorta nada (imagen original).
-   - ``pico -> 0``   -> la montaña se aplana justo al nivel.
-   - valores medios  -> recorte CURVO: los bins más altos pierden
-     proporcionalmente más, así el pico deja de ser un pincho sin volverse
-     una línea recta. Solo se tocan los bins por encima del nivel, nunca los
-     vecinos (no se reparte a los bins de al lado).
-3. La arena recortada se reparte POR IGUAL entre TODAS las intensidades
-   (0-255): la base se infla, pero cuando el nivel es muy bajo (la base es
-   diminuta) la arena no se concentra en unos pocos bins formando picos
-   nuevos, sino que se reparte por todo el rango y el histograma se aplana.
-4. Los píxeles se reasignan de forma determinista: se ordenan por intensidad
-   y, dentro de cada intensidad, por un hash de su posición (así el reparto
-   no forma bandas). El histograma de la imagen resultante es, exactamente,
-   el histograma objetivo calculado en los pasos 2 y 3.
-
-El total de píxeles se conserva siempre y ``pico = 100`` (o ``nivel = 100``)
-devuelve la imagen original sin cambios. Para calcular cualquier estado se
-parte siempre del histograma ORIGINAL: el proceso no acumula.
-"""
-
 import base64
 import io
+from collections.abc import Sequence
+from typing import TypedDict
 
 import numpy as np
 from PIL import Image, ImageDraw
 
-CHANNELS = ("r", "g", "b")
-
-#: Nivel de corte por defecto, en % del máximo del canal.
-DEFAULT_NIVEL = 20.0
-
-#: "Pico" por defecto: 100 = pico original, 0 = recorte total al nivel.
-DEFAULT_PICO = 40.0
-
-#: Multiplicador impar (Knuth) para mezclar posiciones de píxel de forma
-#: determinista al reasignar.
-_POSITION_HASH = np.uint64(2654435761)
+HistogramLike = np.ndarray | Sequence[int] | Sequence[float]
 
 
-# --------------------------------------------------------------- imagen ---
+class PeakInfo(TypedDict):
+    inicio: int
+    fin: int
+    umbral: float
+
+
+class PreparedImage(TypedDict):
+    hist_original: dict[str, list[int]]
+    peaks: dict[str, PeakInfo]
+
+CHANNELS: tuple[str, str, str] = ("r", "g", "b")
+
+DEFAULT_NIVEL: float = 20.0
+
+DEFAULT_PICO: float = 40.0
+
+_POSITION_HASH: np.uint64 = np.uint64(2654435761)
 
 
 def load_image(data: bytes) -> np.ndarray:
-    """Decodifica bytes (JPG/PNG/...) a un arreglo RGB uint8 de shape (H, W, 3)."""
     img = Image.open(io.BytesIO(data))
     img = img.convert("RGB")
     return np.asarray(img, dtype=np.uint8)
 
 
 def to_data_url(img: np.ndarray, fmt: str = "PNG") -> str:
-    """Convierte un arreglo RGB uint8 a data-URL (base64) listo para <img>/canvas."""
     pil = Image.fromarray(img, mode="RGB")
     buf = io.BytesIO()
     pil.save(buf, format=fmt, quality=92)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-    mime = "image/png" if fmt.upper() == "PNG" else "image/jpeg"
+    if fmt.upper() == "PNG":
+        mime = "image/png"
+    else:
+        mime = "image/jpeg"
     return f"data:{mime};base64,{b64}"
 
 
-# ---------------------------------------------------------- histogramas ---
-
-
 def channel_histogram(channel: np.ndarray) -> np.ndarray:
-    """Histograma de 256 niveles de un canal uint8."""
     return np.bincount(np.asarray(channel).ravel(), minlength=256).astype(np.int64)
 
 
-def compute_histograms(img: np.ndarray) -> dict:
-    """Histogramas de 256 bins para los canales R, G y B (datos reales de los píxeles)."""
-    return {name: channel_histogram(img[:, :, i]) for i, name in enumerate(CHANNELS)}
+def compute_histograms(img: np.ndarray) -> dict[str, np.ndarray]:
+    hists: dict[str, np.ndarray] = {}
+    for i, name in enumerate(CHANNELS):
+        hists[name] = channel_histogram(img[:, :, i])
+    return hists
 
 
-def _as_histogram(hist) -> np.ndarray:
+def _as_histogram(hist: HistogramLike) -> np.ndarray:
     h = np.asarray(hist, dtype=np.float64).ravel()
     if h.size != 256:
         raise ValueError("El histograma debe tener 256 niveles.")
@@ -86,149 +66,124 @@ def _as_histogram(hist) -> np.ndarray:
     return h
 
 
-# ------------------------------------------------------- nivel de corte ---
+def _clamp_percent(valor: float) -> float:
+    if valor < 0.0:
+        return 0.0
+    if valor > 100.0:
+        return 100.0
+    return valor
 
 
-def _nivel_fraction(nivel) -> float:
-    """Convierte el nivel (0-100 %) a fracción del máximo, recortando al rango."""
-    return min(max(float(nivel), 0.0), 100.0) / 100.0
+def _nivel_fraction(nivel: float) -> float:
+    return _clamp_percent(float(nivel)) / 100.0
 
 
-def level_threshold(hist, nivel: float = DEFAULT_NIVEL) -> float:
-    """Cuenta del nivel de corte: ``nivel`` % del máximo del canal."""
+def level_threshold(hist: HistogramLike, nivel: float = DEFAULT_NIVEL) -> float:
     h = _as_histogram(hist)
     return float(h.max()) * _nivel_fraction(nivel)
 
 
-def level_mask(hist, nivel: float = DEFAULT_NIVEL) -> np.ndarray:
-    """Booleanos: qué intensidades quedan por encima del nivel de corte.
-
-    Si ninguna lo supera (histograma vacío, plano o ``nivel = 100``) se toma
-    la intensidad de cuenta máxima, para no quedarnos sin zona alta.
-    """
+def level_mask(hist: HistogramLike, nivel: float = DEFAULT_NIVEL) -> np.ndarray:
     h = _as_histogram(hist)
     umbral = h.max() * _nivel_fraction(nivel)
     mask = h > umbral
     if not mask.any():
         mask = h == h.max()
-    return mask if h.sum() > 0 else np.zeros(256, dtype=bool)
-
-
-# ------------------------------------------- histograma objetivo (arena) ---
+    if h.sum() > 0:
+        return mask
+    return np.zeros(256, dtype=bool)
 
 
 def _round_histogram(hist: np.ndarray, total: int) -> np.ndarray:
-    """Redondea un histograma fraccionario a enteros conservando el total."""
     base = np.floor(hist).astype(np.int64)
     resto = int(total) - int(base.sum())
-    if resto > 0:  # las partes fraccionarias más grandes se llevan +1
+    if resto > 0:
         sobrantes = np.argsort(-(hist - base))[:resto]
         base[sobrantes] += 1
     return base
 
 
-def _soft_clip(exceso, nivel: float, pico: float):
-    """Recorta el exceso con una curva: los valores más altos pierden más.
-
-    Devuelve el exceso que SOBREVIVE al recorte. Con ``pico = 100`` no se
-    recorta nada (devuelve el exceso tal cual); cuanto menor sea ``pico``,
-    más se acerca el resultado a 0 (la cima baja hasta el nivel). Como la
-    curva es monótona, nunca invierte el orden de los bins.
-    """
+def _soft_clip(exceso: np.ndarray, nivel: float, pico: float) -> np.ndarray:
     ex = np.asarray(exceso, dtype=np.float64)
     if nivel <= 0:
         return np.zeros_like(ex)
-    p = min(max(float(pico), 0.0), 100.0)
+    p = _clamp_percent(float(pico))
     k = 100.0 / max(p, 1e-6) - 1.0
     return ex / (1.0 + k * ex / nivel)
 
 
-def sand_target_histogram(hist, nivel: float = 20.0, pico: float = 40.0) -> np.ndarray:
-    """Histograma objetivo tras recortar la montaña y esparcir la arena.
-
-    - Se recorta el exceso sobre el nivel con la curva de ``_soft_clip``.
-    - La arena recortada se reparte POR IGUAL entre TODAS las intensidades
-      (0-255), no solo entre las que quedan por debajo del nivel. Así, con
-      niveles muy bajos (base diminuta) la arena no se concentra en unos
-      pocos bins y no aparecen picos nuevos: el histograma se aplana.
-    """
+def sand_target_histogram(
+    hist: HistogramLike,
+    nivel: float = DEFAULT_NIVEL,
+    pico: float = DEFAULT_PICO,
+) -> np.ndarray:
     h = _as_histogram(hist)
     n = int(h.sum())
     if n <= 0:
         return h.astype(np.int64)
 
-    p = min(max(float(pico), 0.0), 100.0)
+    p = _clamp_percent(float(pico))
     mask = level_mask(h, nivel)
     fuera = ~mask
-    if p >= 100.0 or not fuera.any():  # sin recorte o sin base: nada que hacer
+    if p >= 100.0 or not fuera.any():
         return h.astype(np.int64)
 
     umbral = h.max() * _nivel_fraction(nivel)
     exceso = np.maximum(h - umbral, 0.0)
     objetivo = h.copy()
     objetivo[mask] = umbral + _soft_clip(exceso[mask], umbral, p)
-    arena = h[mask].sum() - objetivo[mask].sum()  # píxeles que se desprenden
-    objetivo += arena / objetivo.size             # la arena se reparte por igual
+    arena = h[mask].sum() - objetivo[mask].sum()
+    objetivo += arena / objetivo.size
     return _round_histogram(objetivo, int(h.sum()))
 
 
-# --------------------------------------------------- reasignación (píxel) ---
-
-
 def _assignment_order(flat: np.ndarray) -> np.ndarray:
-    """Orden determinista de los píxeles: por intensidad y, dentro de cada
-    intensidad, por un hash de su posición (evita bandas espaciales)."""
     posiciones = np.arange(flat.size, dtype=np.uint64)
     hash_pos = (posiciones * _POSITION_HASH) & np.uint64(0xFFFFFFFF)
     return np.lexsort((hash_pos, flat))
 
 
-def sand_channel(channel: np.ndarray, nivel: float = 20.0, pico: float = 40.0) -> np.ndarray:
-    """Aplica el efecto arena a un canal uint8 y devuelve el canal resultante.
-
-    El histograma de salida coincide exactamente con ``sand_target_histogram``.
-    """
+def sand_channel(
+    channel: np.ndarray,
+    nivel: float = DEFAULT_NIVEL,
+    pico: float = DEFAULT_PICO,
+) -> np.ndarray:
     ch = np.asarray(channel, dtype=np.uint8)
     hist = channel_histogram(ch)
     objetivo = sand_target_histogram(hist, nivel, pico)
-    if np.array_equal(objetivo, hist):  # sin recorte (o sin base): nada que hacer
+    if np.array_equal(objetivo, hist):
         return ch.copy()
 
-    # Lista de destinos: cada intensidad repetida tantas veces como píxeles
-    # debe tener en el resultado.
     destinos = np.repeat(np.arange(256, dtype=np.uint8), objetivo)
     orden = _assignment_order(ch.ravel())
 
     salida = np.empty(ch.size, dtype=np.uint8)
-    salida[orden] = destinos  # el píxel más bajo recibe el destino más bajo
+    salida[orden] = destinos
     return salida.reshape(ch.shape)
 
 
 def sand_rgb(
     img: np.ndarray,
-    n_r: float = 20.0,
-    n_g: float = 20.0,
-    n_b: float = 20.0,
-    pico: float = 40.0,
+    n_r: float = DEFAULT_NIVEL,
+    n_g: float = DEFAULT_NIVEL,
+    n_b: float = DEFAULT_NIVEL,
+    pico: float = DEFAULT_PICO,
 ) -> np.ndarray:
-    """Aplica el efecto arena a los tres canales RGB de forma independiente."""
+    niveles = (n_r, n_g, n_b)
     salida = np.empty_like(img)
-    for i, nivel in enumerate((n_r, n_g, n_b)):
+    for i, nivel in enumerate(niveles):
         salida[:, :, i] = sand_channel(img[:, :, i], nivel, pico)
     return salida
 
 
-# ---------------------------------------------------------- preparación ---
-
-
-def prepare_image(img: np.ndarray, nivel: float = 20.0) -> dict:
-    """Histogramas originales y zona de corte de cada canal (se calculan una vez)."""
+def prepare_image(img: np.ndarray, nivel: float = DEFAULT_NIVEL) -> PreparedImage:
     hist = compute_histograms(img)
-    peaks = {}
+    peaks: dict[str, PeakInfo] = {}
     for name in CHANNELS:
         mask = np.flatnonzero(level_mask(hist[name], nivel))
-        if mask.size == 0:  # imagen vacía: sin zona
-            inicio = fin = 0
+        if mask.size == 0:
+            inicio = 0
+            fin = 0
         else:
             inicio = int(mask[0])
             fin = int(mask[-1])
@@ -237,17 +192,15 @@ def prepare_image(img: np.ndarray, nivel: float = 20.0) -> dict:
             "fin": fin,
             "umbral": level_threshold(hist[name], nivel),
         }
-    return {
-        "hist_original": {name: hist[name].tolist() for name in CHANNELS},
-        "peaks": peaks,
-    }
 
+    hist_original: dict[str, list[int]] = {}
+    for name in CHANNELS:
+        hist_original[name] = hist[name].tolist()
 
-# ------------------------------------------------------ imagen de prueba ---
+    return {"hist_original": hist_original, "peaks": peaks}
 
 
 def generate_sample_image(width: int = 480, height: int = 360) -> np.ndarray:
-    """Genera una imagen de prueba con bajo contraste (ideal para demostrar el efecto)."""
     y = np.linspace(0, 1, height, dtype=np.float64)[:, None]
     x = np.linspace(0, 1, width, dtype=np.float64)[None, :]
 
