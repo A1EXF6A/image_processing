@@ -75,12 +75,11 @@ Abre el navegador en `http://localhost:4321`.
 
 ## Uso
 
-- **4 sliders de nivel de corte** (General + R/G/B): deciden cuánta montaña se recorta en cada
-  canal. Los sliders van **invertidos**: a la **izquierda** el nivel está **arriba** (100 %, sin
-  efecto) y a medida que se deslizan hacia la **derecha** el nivel **baja** (hasta 5 %, más
-  agresivo). El general sincroniza los tres; si difieren, muestra «Mixto» y
-  la línea inferior indica `R 20% · G 20% · B 20%`.
-- **Reiniciar** devuelve los cuatro controles a 20 %.
+- **4 sliders de nivel de corte** (General + R/G/B): el valor del slider es la "cantidad de recorte"
+  0–100 y por defecto es **0**, que deja el **corte arriba** (nivel 100 %, sin efecto). Al moverlo
+  hacia la **derecha** el nivel **baja** (hasta 5 %, más agresivo). El general sincroniza los tres;
+  si difieren, muestra «Mixto» y la línea inferior indica `R 100% · G 100% · B 100%`.
+- **Reiniciar** devuelve los cuatro controles a 0 (nivel 100 %, sin recorte).
 - **Descargar** guarda el resultado en PNG.
 - La vista previa muestra la imagen original y la procesada, y los seis histogramas (3 originales +
   3 procesados) se redibujan con los datos reales de salida.
