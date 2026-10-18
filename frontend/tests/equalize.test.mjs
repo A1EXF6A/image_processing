@@ -210,14 +210,15 @@ test("El histograma actualizado coincide con los píxeles reales de salida", () 
   assert.deepEqual(histBefore, histBeforeCopy, "los histogramas originales no cambian");
 });
 
-test("La página define exactamente 4 sliders (0-100) y 8 histogramas", () => {
+test("La página define exactamente 4 sliders de nivel (5-100) y 8 histogramas", () => {
   const html = fs.readFileSync(ASTRO_PAGE, "utf8");
 
   const ranges = html.match(/<input[^>]*type="range"[^>]*>/g) || [];
   assert.equal(ranges.length, 4, "deben existir exactamente 4 sliders");
   for (const tag of ranges) {
-    assert.match(tag, /min="0"/);
+    assert.match(tag, /min="5"/);
     assert.match(tag, /max="100"/);
+    assert.match(tag, /value="20"/);
     assert.doesNotMatch(tag, /min="-100"/);
   }
   for (const id of ["eq-all", "eq-r", "eq-g", "eq-b"]) {
@@ -225,7 +226,7 @@ test("La página define exactamente 4 sliders (0-100) y 8 histogramas", () => {
   }
 
   const canvases = html.match(/<canvas[^>]*id="hist-/g) || [];
-  assert.equal(canvases.length, 6, "deben existir exactamente 8 histogramas");
+  assert.equal(canvases.length, 6, "deben existir exactamente 6 histogramas");
   for (const id of [
     "hist-r-before",
     "hist-r-after",

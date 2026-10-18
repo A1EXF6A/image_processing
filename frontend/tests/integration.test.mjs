@@ -1,21 +1,22 @@
 /**
- * Prueba de integración frontend <-> backend.
+ * Prueba de integración contra el backend.
  *
  * Reproduce el flujo real del navegador:
- *   1. POST /api/prepare con la imagen original
- *   2. decodificación de la imagen y obtención de los píxeles RGBA
- *   3. aplicación de las LUT interpoladas con los porcentajes de los sliders
- *   4. cálculo de los histogramas actualizados sobre los píxeles de salida
- * y compara el resultado con el cálculo independiente de POST /api/process.
+ *   1. GET  /api/sample   (imagen de prueba)
+ *   2. POST /api/prepare  (imagen + histogramas originales + zona de corte)
+ *   3. POST /api/process  (nivel de corte por canal + pico fijo) y se comprueba
+ *      que la respuesta sea coherente: el total de píxeles se conserva, los
+ *      histogramas originales no cambian y el proceso es determinista.
  *
- * Se omite automáticamente si el backend no está levantado en http://127.0.0.1:8000.
+ * Todo el algoritmo vive en el backend, así que no hace falta decodificar
+ * imágenes en el cliente. Se omite automáticamente si el backend no está
+ * levantado en http://127.0.0.1:8000.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { histogramsFromRgba, processRgba } from "../src/lib/equalize.js";
-
 const API = process.env.PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const CHANNELS = ["r", "g", "b"];
 
 async function backendAvailable() {
   try {
@@ -28,60 +29,67 @@ async function backendAvailable() {
 
 const available = await backendAvailable();
 
-function decodeDataUrl(dataUrl) {
-  const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-  return Buffer.from(b64, "base64");
+async function sampleForm() {
+  const sample = await (await fetch(`${API}/api/sample`)).arrayBuffer();
+  const blob = new Blob([sample], { type: "image/png" });
+  const form = new FormData();
+  form.append("file", blob, "sample.png");
+  return form;
 }
 
-async function rgbaFromPng(buffer) {
-  const sharp = (await import("sharp")).default;
-  const { data, info } = await sharp(buffer)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  assert.equal(info.channels, 4);
-  return { data: new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info };
+function sum(values) {
+  return values.reduce((a, b) => a + b, 0);
 }
 
 test(
-  "integración: /api/prepare + LUTs del cliente == /api/process",
+  "integración: /api/prepare + /api/process son coherentes y deterministas",
   { skip: available ? false : `backend no disponible en ${API}` },
   async () => {
-    const sample = await (await fetch(`${API}/api/sample`)).arrayBuffer();
-    const file = new Blob([sample], { type: "image/png" });
+    const prepared = await (
+      await fetch(`${API}/api/prepare`, { method: "POST", body: await sampleForm() })
+    ).json();
 
-    const prepareForm = new FormData();
-    prepareForm.append("file", file, "sample.png");
-    const prepared = await (await fetch(`${API}/api/prepare`, { method: "POST", body: prepareForm })).json();
+    assert.match(prepared.image_before, /^data:image\/png;base64,/);
+    assert.ok(prepared.width > 0 && prepared.height > 0);
+    const total = prepared.width * prepared.height;
+    for (const ch of CHANNELS) {
+      assert.equal(prepared.hist_original[ch].length, 256);
+      assert.equal(sum(prepared.hist_original[ch]), total, `el original de ${ch} suma los píxeles`);
+      assert.ok(prepared.hist_original[ch].some((v) => v > 0));
+    }
 
-    const { data: source, info } = await rgbaFromPng(decodeDataUrl(prepared.image_before));
-    assert.equal(info.width, prepared.width);
-    assert.equal(info.height, prepared.height);
+    async function process(niveles, pico = 40) {
+      const form = await sampleForm();
+      for (const ch of CHANNELS) form.append(`nivel_${ch}`, String(niveles[ch]));
+      form.append("pico", String(pico));
+      const res = await fetch(`${API}/api/process`, { method: "POST", body: form });
+      assert.ok(res.ok, `process respondió ${res.status}`);
+      return res.json();
+    }
 
-    const processForm = new FormData();
-    processForm.append("file", file, "sample.png");
-    processForm.append("eq_r", "60");
-    processForm.append("eq_g", "20");
-    processForm.append("eq_b", "100");
-    const backend = await (await fetch(`${API}/api/process`, { method: "POST", body: processForm })).json();
+    const data = await process({ r: 20, g: 20, b: 20 });
+    assert.match(data.image_after, /^data:image\/(png|jpeg);base64,/);
+    assert.deepEqual(data.nivel, { r: 20, g: 20, b: 20 });
+    assert.equal(data.pico, 40);
+    for (const ch of CHANNELS) {
+      assert.equal(data.hist_after[ch].length, 256);
+      assert.equal(sum(data.hist_after[ch]), total, `el total de ${ch} se conserva`);
+      assert.deepEqual(data.hist_original[ch], prepared.hist_original[ch], "el original no cambia");
+      // el pico baja: la intensidad más poblada tiene menos píxeles que antes
+      assert.ok(
+        Math.max(...data.hist_after[ch]) < Math.max(...prepared.hist_original[ch]),
+        `el pico de ${ch} debe bajar`,
+      );
+    }
 
-    const pct = { r: 60, g: 20, b: 100 };
-    const out = processRgba(source, prepared.luts, pct);
-    const { data: expected } = await rgbaFromPng(decodeDataUrl(backend.image_after));
+    // determinista: repetir la misma petición da exactamente lo mismo
+    const again = await process({ r: 20, g: 20, b: 20 });
+    assert.deepEqual(again.hist_after, data.hist_after);
 
-    assert.equal(out.length, expected.length);
-    assert.deepEqual(Array.from(out), Array.from(expected), "los píxeles deben coincidir");
-
-    const histAfter = histogramsFromRgba(out);
-    assert.deepEqual(histAfter, backend.hist_equalized, "histogramas actualizados reales");
-    assert.deepEqual(prepared.hist_original, backend.hist_original, "histogramas originales intactos");
-
-    // 0 % reproduce la imagen original.
-    const identity = processRgba(source, prepared.luts, { r: 0, g: 0, b: 0 });
-    assert.deepEqual(Array.from(identity), Array.from(source));
-
-    // El orden de las peticiones no altera el resultado.
-    const again = processRgba(source, prepared.luts, pct);
-    assert.deepEqual(Array.from(again), Array.from(out));
+    // nivel = 100 no recorta nada -> histograma original
+    const identidad = await process({ r: 100, g: 100, b: 100 });
+    for (const ch of CHANNELS) {
+      assert.deepEqual(identidad.hist_after[ch], prepared.hist_original[ch]);
+    }
   },
 );

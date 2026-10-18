@@ -1,8 +1,9 @@
 """Backend FastAPI: efecto "arena" sobre el histograma RGB.
 
-El pico de cada canal se desinfla y la arena se esparce por igual entre las
-demás intensidades (porcentajes 0-100 por canal). Devuelve además los
-histogramas originales y actualizados de R, G y B.
+El nivel de corte de cada canal (0-100 % del máximo) marca la "montaña"; el
+recorte curvo la baja según el ``pico`` (fijo en 40 por defecto) y la arena se
+esparce por igual entre las intensidades por debajo del nivel. Devuelve además
+los histogramas originales y actualizados de R, G y B.
 """
 
 import io
@@ -61,12 +62,13 @@ async def prepare(file: UploadFile = File(...)):
     """Calcula una sola vez, para cada imagen cargada:
 
     - los histogramas originales reales de R, G y B, y
-    - la zona del pico de cada canal (rango de intensidades y umbral).
+    - la zona de corte de cada canal (rango de intensidades y umbral) al
+      nivel por defecto, para saber de dónde sale la arena.
 
-    Así el cliente conoce de dónde sale la arena antes de mover los sliders.
+    Así el cliente conoce la imagen antes de mover los sliders.
     """
     _, img = await _read_image(file)
-    payload = iu.prepare_image(img)
+    payload = iu.prepare_image(img, iu.DEFAULT_NIVEL)
     return {
         "width": int(img.shape[1]),
         "height": int(img.shape[0]),
@@ -78,30 +80,33 @@ async def prepare(file: UploadFile = File(...)):
 @app.post("/api/process")
 async def process(
     file: UploadFile = File(...),
-    cut_r: float = Form(0),
-    cut_g: float = Form(0),
-    cut_b: float = Form(0),
+    nivel_r: float = Form(iu.DEFAULT_NIVEL),
+    nivel_g: float = Form(iu.DEFAULT_NIVEL),
+    nivel_b: float = Form(iu.DEFAULT_NIVEL),
+    pico: float = Form(iu.DEFAULT_PICO),
     format: str = Form("png"),
 ):
-    """Aplica el efecto arena (0-100 %) a cada canal RGB.
+    """Aplica el efecto arena a cada canal RGB.
 
     Cada canal se procesa de forma independiente a partir de su histograma
-    original: el pico pierde ``cut`` % de su exceso y esos píxeles se reparten
-    por igual entre las demás intensidades.
+    original: se recorta con una curva todo lo que supera su ``nivel``
+    (0-100 % del máximo) según ``pico`` (100 = pico original, 0 = plano) y esa
+    arena se reparte por igual entre las intensidades por debajo del nivel.
 
     ``format`` elige cómo se devuelve ``image_after``: ``png`` (sin pérdida,
     por defecto, para descargar) o ``jpeg`` (vista previa, mucho más liviana).
     No devuelve ``image_before`` (el cliente ya la recibió en /api/prepare).
     """
     _, img = await _read_image(file)
-    _check_percent("cut_r", cut_r)
-    _check_percent("cut_g", cut_g)
-    _check_percent("cut_b", cut_b)
+    nivel_r = _check_percent("nivel_r", nivel_r)
+    nivel_g = _check_percent("nivel_g", nivel_g)
+    nivel_b = _check_percent("nivel_b", nivel_b)
+    pico = _check_percent("pico", pico)
     fmt = format.strip().lower()
     if fmt not in ("png", "jpeg"):
         raise HTTPException(status_code=422, detail="format debe ser 'png' o 'jpeg'.")
 
-    procesada = iu.sand_rgb(img, cut_r, cut_g, cut_b)
+    procesada = iu.sand_rgb(img, nivel_r, nivel_g, nivel_b, pico)
     hist_original = iu.compute_histograms(img)
     hist_after = iu.compute_histograms(procesada)
 
@@ -111,6 +116,7 @@ async def process(
         "image_after": iu.to_data_url(procesada, fmt.upper()),
         "hist_original": {name: hist_original[name].tolist() for name in ("r", "g", "b")},
         "hist_after": {name: hist_after[name].tolist() for name in ("r", "g", "b")},
-        "peaks": iu.prepare_image(img)["peaks"],
-        "cut": {"r": cut_r, "g": cut_g, "b": cut_b},
+        "peaks": iu.prepare_image(img, iu.DEFAULT_NIVEL)["peaks"],
+        "nivel": {"r": nivel_r, "g": nivel_g, "b": nivel_b},
+        "pico": pico,
     }

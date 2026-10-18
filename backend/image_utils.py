@@ -1,22 +1,26 @@
 """Procesamiento de imágenes: histogramas RGB y efecto "arena" por canal.
 
 Efecto arena (por canal, de forma independiente)
-------------------------------------------------
-1. ZONA DEL PICO: se marca cada intensidad cuya cuenta supera el
-   ``PEAK_FRACTION`` (45 %) del máximo del canal. Ese es el "montón de arena".
-2. El slider ``percent`` (0-100) define cuánto se DESINFLA el pico: se le
-   quitan ese porcentaje de su *exceso* (la cuenta por encima del umbral).
-3. Los píxeles quitados se reparten POR IGUAL entre TODAS las intensidades
-   que no son pico: "la arena se esparce por la base" y todo lo demás se
-   infla de la misma forma.
+-----------------------------------------------
+1. NIVEL DE CORTE: ``nivel`` (0-100) fija una línea al ``nivel`` % del máximo
+   del canal. Todo lo que queda por encima de esa línea es la "montaña".
+2. RECORTE CURVO: ``pico`` (0-100, por defecto 40) decide cuánto baja la cima.
+   - ``pico = 100``  -> no se recorta nada (imagen original).
+   - ``pico -> 0``   -> la montaña se aplana justo al nivel.
+   - valores medios  -> recorte CURVO: los bins más altos pierden
+     proporcionalmente más, así el pico deja de ser un pincho sin volverse
+     una línea recta. Solo se tocan los bins por encima del nivel, nunca los
+     vecinos (no se reparte a los bins de al lado).
+3. La arena recortada se reparte POR IGUAL entre las intensidades que quedan
+   por debajo del nivel: la base se infla de forma uniforme.
 4. Los píxeles se reasignan de forma determinista: se ordenan por intensidad
    y, dentro de cada intensidad, por un hash de su posición (así el reparto
    no forma bandas). El histograma de la imagen resultante es, exactamente,
    el histograma objetivo calculado en los pasos 2 y 3.
 
-El total de píxeles se conserva siempre y ``percent=0`` devuelve la imagen
-original sin cambios. Para calcular cualquier estado se parte siempre del
-histograma ORIGINAL: el proceso no acumula.
+El total de píxeles se conserva siempre y ``pico = 100`` (o ``nivel = 100``)
+devuelve la imagen original sin cambios. Para calcular cualquier estado se
+parte siempre del histograma ORIGINAL: el proceso no acumula.
 """
 
 import base64
@@ -27,9 +31,11 @@ from PIL import Image, ImageDraw
 
 CHANNELS = ("r", "g", "b")
 
-#: Una intensidad pertenece a la zona del pico si su cuenta supera este
-#: porcentaje del máximo del canal.
-PEAK_FRACTION = 0.45
+#: Nivel de corte por defecto, en % del máximo del canal.
+DEFAULT_NIVEL = 20.0
+
+#: "Pico" por defecto: 100 = pico original, 0 = recorte total al nivel.
+DEFAULT_PICO = 40.0
 
 #: Multiplicador impar (Knuth) para mezclar posiciones de píxel de forma
 #: determinista al reasignar.
@@ -78,22 +84,29 @@ def _as_histogram(hist) -> np.ndarray:
     return h
 
 
-# --------------------------------------------------------- zona del pico ---
+# ------------------------------------------------------- nivel de corte ---
 
 
-def peak_threshold(hist) -> float:
-    """Cuenta mínima para pertenecer a la zona del pico: 45 % del máximo."""
-    return float(_as_histogram(hist).max()) * PEAK_FRACTION
+def _nivel_fraction(nivel) -> float:
+    """Convierte el nivel (0-100 %) a fracción del máximo, recortando al rango."""
+    return min(max(float(nivel), 0.0), 100.0) / 100.0
 
 
-def peak_mask(hist, fraction: float = PEAK_FRACTION) -> np.ndarray:
-    """Booleanos: qué intensidades forman la zona del pico (cuenta > umbral).
+def level_threshold(hist, nivel: float = DEFAULT_NIVEL) -> float:
+    """Cuenta del nivel de corte: ``nivel`` % del máximo del canal."""
+    h = _as_histogram(hist)
+    return float(h.max()) * _nivel_fraction(nivel)
 
-    Si ninguna supera el umbral (histograma vacío o casi plano) se toma como
-    pico la intensidad con la cuenta máxima, para no quedarnos sin arena.
+
+def level_mask(hist, nivel: float = DEFAULT_NIVEL) -> np.ndarray:
+    """Booleanos: qué intensidades quedan por encima del nivel de corte.
+
+    Si ninguna lo supera (histograma vacío, plano o ``nivel = 100``) se toma
+    la intensidad de cuenta máxima, para no quedarnos sin zona alta.
     """
     h = _as_histogram(hist)
-    mask = h > h.max() * fraction
+    umbral = h.max() * _nivel_fraction(nivel)
+    mask = h > umbral
     if not mask.any():
         mask = h == h.max()
     return mask if h.sum() > 0 else np.zeros(256, dtype=bool)
@@ -112,30 +125,47 @@ def _round_histogram(hist: np.ndarray, total: int) -> np.ndarray:
     return base
 
 
-def sand_target_histogram(hist, percent: float, fraction: float = PEAK_FRACTION) -> np.ndarray:
-    """Histograma objetivo tras desinflar el pico y esparcir la arena.
+def _soft_clip(exceso, nivel: float, pico: float):
+    """Recorta el exceso con una curva: los valores más altos pierden más.
 
-    - Se quita del pico ``percent`` % de su exceso (la cuenta sobre el umbral).
-    - Esa cantidad se reparte POR IGUAL entre las intensidades que no son pico.
+    Devuelve el exceso que SOBREVIVE al recorte. Con ``pico = 100`` no se
+    recorta nada (devuelve el exceso tal cual); cuanto menor sea ``pico``,
+    más se acerca el resultado a 0 (la cima baja hasta el nivel). Como la
+    curva es monótona, nunca invierte el orden de los bins.
+    """
+    ex = np.asarray(exceso, dtype=np.float64)
+    if nivel <= 0:
+        return np.zeros_like(ex)
+    p = min(max(float(pico), 0.0), 100.0)
+    k = 100.0 / max(p, 1e-6) - 1.0
+    return ex / (1.0 + k * ex / nivel)
+
+
+def sand_target_histogram(hist, nivel: float = 20.0, pico: float = 40.0) -> np.ndarray:
+    """Histograma objetivo tras recortar la montaña y esparcir la arena.
+
+    - Se recorta el exceso sobre el nivel con la curva de ``_soft_clip``.
+    - La arena recortada se reparte POR IGUAL entre las intensidades que
+      quedan por debajo del nivel.
     """
     h = _as_histogram(hist)
     n = int(h.sum())
     if n <= 0:
         return h.astype(np.int64)
 
-    p = min(max(float(percent), 0.0), 100.0) / 100.0
-    mask = peak_mask(h, fraction)
+    p = min(max(float(pico), 0.0), 100.0)
+    mask = level_mask(h, nivel)
     fuera = ~mask
-    if p == 0.0 or not fuera.any():
+    if p >= 100.0 or not fuera.any():  # sin recorte o sin base: nada que hacer
         return h.astype(np.int64)
 
-    umbral = h.max() * fraction
-    exceso = np.maximum(h - umbral, 0.0)  # arena disponible en el pico
-    arena = p * exceso.sum()              # píxeles que se desprenden
-
-    objetivo = h - p * exceso             # el pico se desinfla
-    objetivo[fuera] += arena / fuera.sum()  # y la base se infla por igual
-    return _round_histogram(objetivo, n)
+    umbral = h.max() * _nivel_fraction(nivel)
+    exceso = np.maximum(h - umbral, 0.0)
+    objetivo = h.copy()
+    objetivo[mask] = umbral + _soft_clip(exceso[mask], umbral, p)
+    arena = h[mask].sum() - objetivo[mask].sum()  # píxeles que se desprenden
+    objetivo[fuera] += arena / fuera.sum()        # la base se infla por igual
+    return _round_histogram(objetivo, int(h.sum()))
 
 
 # --------------------------------------------------- reasignación (píxel) ---
@@ -149,15 +179,15 @@ def _assignment_order(flat: np.ndarray) -> np.ndarray:
     return np.lexsort((hash_pos, flat))
 
 
-def sand_channel(channel: np.ndarray, percent: float, fraction: float = PEAK_FRACTION) -> np.ndarray:
+def sand_channel(channel: np.ndarray, nivel: float = 20.0, pico: float = 40.0) -> np.ndarray:
     """Aplica el efecto arena a un canal uint8 y devuelve el canal resultante.
 
     El histograma de salida coincide exactamente con ``sand_target_histogram``.
     """
     ch = np.asarray(channel, dtype=np.uint8)
     hist = channel_histogram(ch)
-    objetivo = sand_target_histogram(hist, percent, fraction)
-    if np.array_equal(objetivo, hist):  # 0 % (o sin arena): nada que hacer
+    objetivo = sand_target_histogram(hist, nivel, pico)
+    if np.array_equal(objetivo, hist):  # sin recorte (o sin base): nada que hacer
         return ch.copy()
 
     # Lista de destinos: cada intensidad repetida tantas veces como píxeles
@@ -170,27 +200,38 @@ def sand_channel(channel: np.ndarray, percent: float, fraction: float = PEAK_FRA
     return salida.reshape(ch.shape)
 
 
-def sand_rgb(img: np.ndarray, p_r: float, p_g: float, p_b: float) -> np.ndarray:
+def sand_rgb(
+    img: np.ndarray,
+    n_r: float = 20.0,
+    n_g: float = 20.0,
+    n_b: float = 20.0,
+    pico: float = 40.0,
+) -> np.ndarray:
     """Aplica el efecto arena a los tres canales RGB de forma independiente."""
     salida = np.empty_like(img)
-    for i, percent in enumerate((p_r, p_g, p_b)):
-        salida[:, :, i] = sand_channel(img[:, :, i], percent)
+    for i, nivel in enumerate((n_r, n_g, n_b)):
+        salida[:, :, i] = sand_channel(img[:, :, i], nivel, pico)
     return salida
 
 
 # ---------------------------------------------------------- preparación ---
 
 
-def prepare_image(img: np.ndarray) -> dict:
-    """Histogramas originales y zona del pico de cada canal (se calculan una vez)."""
+def prepare_image(img: np.ndarray, nivel: float = 20.0) -> dict:
+    """Histogramas originales y zona de corte de cada canal (se calculan una vez)."""
     hist = compute_histograms(img)
     peaks = {}
     for name in CHANNELS:
-        mask = np.flatnonzero(peak_mask(hist[name]))
+        mask = np.flatnonzero(level_mask(hist[name], nivel))
+        if mask.size == 0:  # imagen vacía: sin zona
+            inicio = fin = 0
+        else:
+            inicio = int(mask[0])
+            fin = int(mask[-1])
         peaks[name] = {
-            "inicio": int(mask[0]),
-            "fin": int(mask[-1]),
-            "umbral": peak_threshold(hist[name]),
+            "inicio": inicio,
+            "fin": fin,
+            "umbral": level_threshold(hist[name], nivel),
         }
     return {
         "hist_original": {name: hist[name].tolist() for name in CHANNELS},
